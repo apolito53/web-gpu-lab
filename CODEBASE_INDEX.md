@@ -20,7 +20,7 @@ Purpose: a compact routing map for the raw WebGPU particle wind tunnel. Keep thi
 - `src/particles/frame.ts`: per-frame uniform writes, compute dispatch, render draw, and buffer swapping.
 - `src/main.ts`: owns RAF cadence timing; `src/particles/frame.ts` owns CPU command-submit timing.
 - `src/particles/types.ts`: shared config, pointer, stats, and constants.
-- `src/ui/controls.ts`: HUD, buttons, sliders, segmented modes, and status/stats updates.
+- `src/ui/controls.ts`: HUD, buttons, sliders, slider help tooltips, segmented modes, and status/stats updates.
 - `src/shaders/particles.compute.wgsl`: velocity integration, pointer force, turbulence, diffusion, damping, and wrapping.
 - `src/shaders/particles.render.wgsl`: instanced quad expansion and soft particle fragment coloring.
 

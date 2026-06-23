@@ -128,34 +128,90 @@ export class Controls {
     panel.append(this.countButtonsElement("View", this.debugButtons));
 
     panel.append(
-      createSlider("Speed", 0.05, 2, 0.01, this.config.speed, (value) => {
-        this.config.speed = value;
-        this.emitChange("speed");
-      }),
-      createSlider("Damping", 0.9, 0.998, 0.001, this.config.damping, (value) => {
-        this.config.damping = value;
-        this.emitChange("damping");
-      }),
-      createSlider("Strength", 0, 4, 0.01, this.config.strength, (value) => {
-        this.config.strength = value;
-        this.emitChange("strength");
-      }),
-      createSlider("Radius", 0.05, 1.2, 0.01, this.config.radius, (value) => {
-        this.config.radius = value;
-        this.emitChange("radius");
-      }),
-      createSlider("Turbulence", 0, 1.5, 0.01, this.config.turbulence, (value) => {
-        this.config.turbulence = value;
-        this.emitChange("turbulence");
-      }),
-      createSlider("Diffusion", 0, 0.08, 0.001, this.config.diffusion, (value) => {
-        this.config.diffusion = value;
-        this.emitChange("diffusion");
-      }),
-      createSlider("Size", 1, 8, 0.1, this.config.particleSize, (value) => {
-        this.config.particleSize = value;
-        this.emitChange("particleSize");
-      }),
+      createSlider(
+        "Speed",
+        "Scales how far particles move each frame after forces are applied.",
+        0.05,
+        2,
+        0.01,
+        this.config.speed,
+        (value) => {
+          this.config.speed = value;
+          this.emitChange("speed");
+        },
+      ),
+      createSlider(
+        "Damping",
+        "Controls velocity decay. Lower values bleed energy faster.",
+        0.9,
+        0.998,
+        0.001,
+        this.config.damping,
+        (value) => {
+          this.config.damping = value;
+          this.emitChange("damping");
+        },
+      ),
+      createSlider(
+        "Strength",
+        "Sets how hard the pointer field pushes or pulls particles.",
+        0,
+        4,
+        0.01,
+        this.config.strength,
+        (value) => {
+          this.config.strength = value;
+          this.emitChange("strength");
+        },
+      ),
+      createSlider(
+        "Radius",
+        "Sets the pointer field reach. Higher values affect more particles.",
+        0.05,
+        1.2,
+        0.01,
+        this.config.radius,
+        (value) => {
+          this.config.radius = value;
+          this.emitChange("radius");
+        },
+      ),
+      createSlider(
+        "Turbulence",
+        "Adds smooth flow-field drift on top of the pointer force.",
+        0,
+        1.5,
+        0.01,
+        this.config.turbulence,
+        (value) => {
+          this.config.turbulence = value;
+          this.emitChange("turbulence");
+        },
+      ),
+      createSlider(
+        "Diffusion",
+        "Adds tiny per-particle phase noise to break dense bands.",
+        0,
+        0.08,
+        0.001,
+        this.config.diffusion,
+        (value) => {
+          this.config.diffusion = value;
+          this.emitChange("diffusion");
+        },
+      ),
+      createSlider(
+        "Size",
+        "Sets particle sprite diameter in screen pixels before velocity boost.",
+        1,
+        8,
+        0.1,
+        this.config.particleSize,
+        (value) => {
+          this.config.particleSize = value;
+          this.emitChange("particleSize");
+        },
+      ),
     );
 
     root.append(panel);
@@ -268,24 +324,35 @@ function createButton(label: string, onClick: () => void): HTMLButtonElement {
 
 function createSlider(
   label: string,
+  helpText: string,
   min: number,
   max: number,
   step: number,
   value: number,
   onInput: (value: number) => void,
 ): HTMLElement {
-  const wrapper = document.createElement("label");
+  const wrapper = document.createElement("div");
   wrapper.className = "slider-control";
   const top = document.createElement("span");
   top.className = "slider-top";
+  const nameWrap = document.createElement("span");
+  nameWrap.className = "slider-name-wrap";
   const name = document.createElement("span");
   name.textContent = label;
+  const help = document.createElement("button");
+  help.type = "button";
+  help.className = "help-chip";
+  help.textContent = "?";
+  help.dataset.tooltip = helpText;
+  help.setAttribute("aria-label", `${label}: ${helpText}`);
   const readout = document.createElement("strong");
   readout.textContent = value.toFixed(step < 0.01 ? 3 : 2);
-  top.append(name, readout);
+  nameWrap.append(name, help);
+  top.append(nameWrap, readout);
 
   const input = document.createElement("input");
   input.type = "range";
+  input.setAttribute("aria-label", label);
   input.min = String(min);
   input.max = String(max);
   input.step = String(step);
