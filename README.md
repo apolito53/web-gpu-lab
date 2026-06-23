@@ -1,0 +1,57 @@
+# WebGPU Particle Lab
+
+Raw WebGPU particle wind tunnel for learning compute passes, storage buffers, explicit bind group layouts, and WGSL without hiding the machinery behind Three.js.
+
+## Run
+
+```powershell
+npm.cmd install
+npm.cmd run dev
+```
+
+Open `http://127.0.0.1:5187/`.
+
+## Ports
+
+| Service | Port |
+| --- | ---: |
+| Vite app | `5187` |
+| Diagnostics receiver | `5188` |
+| Preview | `4187` |
+
+## Controls
+
+- `Pause` freezes the compute step while keeping the app alive.
+- `Reset` reseeds the GPU buffers.
+- Particle count switches between `16k`, `64k`, and `256k`.
+- Pointer modes switch the mouse/touch field between attract, repel, and orbit.
+- Strength, radius, speed, damping, and turbulence tune the compute shader uniforms.
+
+## Diagnostics
+
+`npm.cmd run dev` starts the app and the local diagnostics server.
+
+- Health: `http://127.0.0.1:5188/health`
+- Recent events: `http://127.0.0.1:5188/events`
+- Retained log file: `logs/events.ndjson`
+
+The browser emits `app.boot`, `webgpu.ready`, `webgpu.deviceLost`, `webgpu.uncapturedError`, `simulation.reset`, `control.changed`, `debug.mode`, and periodic `render.frameSample` events.
+
+## Validate
+
+```powershell
+npm.cmd run typecheck
+npm.cmd run build
+npm.cmd run smoke
+```
+
+Or run the combined pass:
+
+```powershell
+npm.cmd run validate
+```
+
+## Architecture
+
+Start with [`CODEBASE_INDEX.md`](./CODEBASE_INDEX.md) for the fast map.
+

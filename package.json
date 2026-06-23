@@ -1,0 +1,22 @@
+{
+  "name": "webgpu-particle-lab",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/start-dev.mjs",
+    "dev:vite": "vite --host 127.0.0.1 --port 5187 --strictPort",
+    "debug:logs": "node scripts/log-server.mjs",
+    "preview": "vite preview --host 127.0.0.1 --port 4187 --strictPort",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc && vite build",
+    "smoke": "node scripts/smoke.mjs",
+    "validate": "npm run typecheck && npm run build && npm run smoke"
+  },
+  "devDependencies": {
+    "@webgpu/types": "^0.1.70",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5"
+  }
+}
+

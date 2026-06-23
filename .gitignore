@@ -1,0 +1,7 @@
+node_modules/
+dist/
+logs/
+*.log
+.vite/
+.chrome-smoke-profile/
+dev-server*.log
