@@ -17,7 +17,7 @@ import { createParticlePipelineBundle, type ParticlePipelineBundle } from "./pip
 export class ParticleEngine {
   private readonly simUniforms = new Float32Array(SIM_UNIFORM_FLOATS);
   private readonly renderUniforms = new Float32Array(RENDER_UNIFORM_FLOATS);
-  private readonly frameTimes: number[] = [];
+  private readonly rafFrameTimes: number[] = [];
   private resources: ParticleResources;
   private activeReadIndex: 0 | 1 = 0;
   private seed = 0x51a7f13;
@@ -78,7 +78,8 @@ export class ParticleEngine {
       });
     }
 
-    const frameStart = performance.now();
+    const cpuSubmitStart = performance.now();
+    const rafFrameMs = deltaSeconds * 1000;
     const dt = config.paused ? 0 : Math.min(deltaSeconds, 1 / 30);
     const dispatchSize = Math.ceil(config.particleCount / WORKGROUP_SIZE);
     const renderIndex = config.paused ? this.activeReadIndex : this.flipIndex(this.activeReadIndex);
@@ -122,12 +123,13 @@ export class ParticleEngine {
       this.activeReadIndex = renderIndex;
     }
 
-    const frameMs = performance.now() - frameStart;
-    const fps = this.updateFrameAverage(frameMs);
+    const cpuSubmitMs = performance.now() - cpuSubmitStart;
+    const fps = this.updateRafAverage(rafFrameMs);
 
     return {
       fps,
-      frameMs,
+      rafFrameMs,
+      cpuSubmitMs,
       particleCount: config.particleCount,
       dispatchSize,
       canvasWidth: canvasSize.width,
@@ -196,14 +198,14 @@ export class ParticleEngine {
     this.webgpu.device.queue.writeBuffer(this.resources.renderUniformBuffer, 0, this.renderUniforms);
   }
 
-  private updateFrameAverage(frameMs: number): number {
-    this.frameTimes.push(frameMs);
+  private updateRafAverage(frameMs: number): number {
+    this.rafFrameTimes.push(frameMs);
 
-    while (this.frameTimes.length > 45) {
-      this.frameTimes.shift();
+    while (this.rafFrameTimes.length > 45) {
+      this.rafFrameTimes.shift();
     }
 
-    const average = this.frameTimes.reduce((sum, value) => sum + value, 0) / this.frameTimes.length;
+    const average = this.rafFrameTimes.reduce((sum, value) => sum + value, 0) / this.rafFrameTimes.length;
     return average > 0 ? 1000 / average : 0;
   }
 
@@ -211,4 +213,3 @@ export class ParticleEngine {
     return index === 0 ? 1 : 0;
   }
 }
-

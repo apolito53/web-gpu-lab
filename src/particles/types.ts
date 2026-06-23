@@ -32,7 +32,8 @@ export interface PointerState {
 
 export interface FrameStats {
   fps: number;
-  frameMs: number;
+  rafFrameMs: number;
+  cpuSubmitMs: number;
   particleCount: number;
   dispatchSize: number;
   canvasWidth: number;
@@ -78,4 +79,3 @@ export function debugModeIndex(mode: DebugMode): number {
       return 2;
   }
 }
-

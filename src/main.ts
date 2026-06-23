@@ -16,7 +16,7 @@ const pointer: PointerState = { x: 0, y: 0, active: false, locked: false };
 let latestConfig: SimulationConfig;
 let engine: ParticleEngine | null = null;
 let animationFrame = 0;
-let lastFrameTime = performance.now();
+let lastFrameTime: number | null = null;
 
 const controls = new Controls(hudRoot, {
   onConfigChanged: (config, key) => {
@@ -50,6 +50,7 @@ async function boot(): Promise<void> {
     controls.updateStatus(webgpu.adapterSummary);
     engine = await ParticleEngine.create(canvas, webgpu, diagnostics, latestConfig);
     engine.reset(latestConfig);
+    lastFrameTime = null;
     animationFrame = requestAnimationFrame(runFrame);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -72,13 +73,14 @@ function runFrame(now: number): void {
     return;
   }
 
-  const deltaSeconds = (now - lastFrameTime) / 1000;
+  const deltaSeconds = lastFrameTime === null ? 1 / 60 : (now - lastFrameTime) / 1000;
   lastFrameTime = now;
   const stats = engine.frame(now, deltaSeconds, latestConfig, pointer);
   controls.updateStats(stats);
   diagnostics.logFrameSample(now, {
     fps: stats.fps,
-    frameMs: stats.frameMs,
+    rafFrameMs: stats.rafFrameMs,
+    cpuSubmitMs: stats.cpuSubmitMs,
     particleCount: stats.particleCount,
     dispatchSize: stats.dispatchSize,
     canvasWidth: stats.canvasWidth,
@@ -155,4 +157,3 @@ window.addEventListener("beforeunload", () => {
   cancelAnimationFrame(animationFrame);
   engine?.destroy();
 });
-

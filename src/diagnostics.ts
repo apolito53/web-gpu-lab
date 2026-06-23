@@ -3,7 +3,8 @@ export type DiagnosticPayload = Record<string, DiagnosticValue>;
 
 export interface FrameDiagnosticSample extends DiagnosticPayload {
   fps: number;
-  frameMs: number;
+  rafFrameMs: number;
+  cpuSubmitMs: number;
   particleCount: number;
   dispatchSize: number;
   canvasWidth: number;
@@ -59,7 +60,8 @@ export class Diagnostics {
     this.lastFrameLog = now;
     this.log("render.frameSample", {
       fps: Number(sample.fps.toFixed(1)),
-      frameMs: Number(sample.frameMs.toFixed(2)),
+      rafFrameMs: Number(sample.rafFrameMs.toFixed(2)),
+      cpuSubmitMs: Number(sample.cpuSubmitMs.toFixed(2)),
       particleCount: sample.particleCount,
       dispatchSize: sample.dispatchSize,
       canvasWidth: sample.canvasWidth,
@@ -68,4 +70,3 @@ export class Diagnostics {
     });
   }
 }
-

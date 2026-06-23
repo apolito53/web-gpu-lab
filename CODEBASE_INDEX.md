@@ -18,6 +18,7 @@ Purpose: a compact routing map for the raw WebGPU particle wind tunnel. Keep thi
 - `src/particles/buffers.ts`: CPU seeding, ping-pong storage buffers, uniform buffers, and bind groups.
 - `src/particles/pipelines.ts`: explicit bind group layouts and compute/render pipeline creation.
 - `src/particles/frame.ts`: per-frame uniform writes, compute dispatch, render draw, and buffer swapping.
+- `src/main.ts`: owns RAF cadence timing; `src/particles/frame.ts` owns CPU command-submit timing.
 - `src/particles/types.ts`: shared config, pointer, stats, and constants.
 - `src/ui/controls.ts`: HUD, buttons, sliders, segmented modes, and status/stats updates.
 - `src/shaders/particles.compute.wgsl`: velocity integration, pointer force, turbulence, damping, and wrapping.
@@ -47,4 +48,4 @@ npm.cmd run smoke
 - Bind group layouts are explicit on purpose. Avoid `layout: "auto"` unless the goal changes.
 - Particle buffers are recreated only when the particle count changes; resize should not touch simulation buffers.
 - The smoke script verifies app and diagnostics health, not real GPU rendering. Use a browser pass for visual confidence.
-
+- HUD `FPS` is RAF cadence, while `CPU submit` is command encoding/submission time. Do not use CPU submit as display FPS or GPU time.

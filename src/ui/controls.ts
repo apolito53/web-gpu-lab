@@ -22,7 +22,8 @@ export class Controls {
   readonly config: SimulationConfig = { ...DEFAULT_CONFIG };
   private readonly statusValue: HTMLElement;
   private readonly fpsValue: HTMLElement;
-  private readonly frameValue: HTMLElement;
+  private readonly rafFrameValue: HTMLElement;
+  private readonly cpuSubmitValue: HTMLElement;
   private readonly particleValue: HTMLElement;
   private readonly dispatchValue: HTMLElement;
   private readonly pointerValue: HTMLElement;
@@ -45,21 +46,31 @@ export class Controls {
 
     const status = createMetric("Status", "Booting");
     const fps = createMetric("FPS", "--");
-    const frame = createMetric("Frame", "-- ms");
+    const rafFrame = createMetric("RAF ms", "--");
+    const cpuSubmit = createMetric("CPU submit", "--");
     const particles = createMetric("Particles", this.formatCount(this.config.particleCount));
     const dispatch = createMetric("Dispatch", "--");
     const pointer = createMetric("Pointer", "idle");
 
     this.statusValue = status.value;
     this.fpsValue = fps.value;
-    this.frameValue = frame.value;
+    this.rafFrameValue = rafFrame.value;
+    this.cpuSubmitValue = cpuSubmit.value;
     this.particleValue = particles.value;
     this.dispatchValue = dispatch.value;
     this.pointerValue = pointer.value;
 
     const metrics = document.createElement("div");
     metrics.className = "metric-grid";
-    metrics.append(status.row, fps.row, frame.row, particles.row, dispatch.row, pointer.row);
+    metrics.append(
+      status.row,
+      fps.row,
+      rafFrame.row,
+      cpuSubmit.row,
+      particles.row,
+      dispatch.row,
+      pointer.row,
+    );
     panel.append(metrics);
 
     const primaryActions = document.createElement("div");
@@ -156,7 +167,8 @@ export class Controls {
 
   updateStats(stats: FrameStats): void {
     this.fpsValue.textContent = stats.fps.toFixed(0);
-    this.frameValue.textContent = `${stats.frameMs.toFixed(2)} ms`;
+    this.rafFrameValue.textContent = `${stats.rafFrameMs.toFixed(2)} ms`;
+    this.cpuSubmitValue.textContent = `${stats.cpuSubmitMs.toFixed(2)} ms`;
     this.particleValue.textContent = this.formatCount(stats.particleCount);
     this.dispatchValue.textContent = String(stats.dispatchSize);
   }
@@ -287,4 +299,3 @@ function createSlider(
 function titleCase(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
-
