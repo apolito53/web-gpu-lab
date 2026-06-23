@@ -16,6 +16,7 @@ export interface SimulationConfig {
   strength: number;
   radius: number;
   turbulence: number;
+  diffusion: number;
   noiseScale: number;
   flowSpeed: number;
   pointerMode: PointerMode;
@@ -51,6 +52,7 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   strength: 1.25,
   radius: 0.42,
   turbulence: 0.18,
+  diffusion: 0.018,
   noiseScale: 3.2,
   flowSpeed: 0.28,
   pointerMode: "orbit",

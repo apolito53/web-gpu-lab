@@ -148,6 +148,10 @@ export class Controls {
         this.config.turbulence = value;
         this.emitChange("turbulence");
       }),
+      createSlider("Diffusion", 0, 0.08, 0.001, this.config.diffusion, (value) => {
+        this.config.diffusion = value;
+        this.emitChange("diffusion");
+      }),
       createSlider("Size", 1, 8, 0.1, this.config.particleSize, (value) => {
         this.config.particleSize = value;
         this.emitChange("particleSize");

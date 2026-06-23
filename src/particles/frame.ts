@@ -178,7 +178,7 @@ export class ParticleEngine {
     this.simUniforms[14] = config.turbulence;
     this.simUniforms[15] = config.noiseScale;
     this.simUniforms[16] = config.flowSpeed;
-    this.simUniforms[17] = debugModeIndex(config.debugMode);
+    this.simUniforms[17] = config.diffusion;
     this.simUniforms[18] = this.lastCanvasWidth;
     this.simUniforms[19] = this.lastCanvasHeight;
 

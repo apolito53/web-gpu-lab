@@ -21,12 +21,12 @@ Purpose: a compact routing map for the raw WebGPU particle wind tunnel. Keep thi
 - `src/main.ts`: owns RAF cadence timing; `src/particles/frame.ts` owns CPU command-submit timing.
 - `src/particles/types.ts`: shared config, pointer, stats, and constants.
 - `src/ui/controls.ts`: HUD, buttons, sliders, segmented modes, and status/stats updates.
-- `src/shaders/particles.compute.wgsl`: velocity integration, pointer force, turbulence, damping, and wrapping.
+- `src/shaders/particles.compute.wgsl`: velocity integration, pointer force, turbulence, diffusion, damping, and wrapping.
 - `src/shaders/particles.render.wgsl`: instanced quad expansion and soft particle fragment coloring.
 
 ## Common Changes
 
-- Particle physics feel: start in `src/shaders/particles.compute.wgsl`, then expose knobs through `src/ui/controls.ts` and `src/particles/types.ts`.
+- Particle physics feel: start in `src/shaders/particles.compute.wgsl`, then expose knobs through `src/ui/controls.ts` and `src/particles/types.ts`. `Diffusion` is the anti-banding phase-break knob for dense attractor stress tests.
 - Visual particle style: edit `src/shaders/particles.render.wgsl`.
 - WebGPU lifecycle: use `src/gpu/webgpu.ts` and `src/gpu/resize.ts`.
 - Buffer layout changes: update `src/particles/buffers.ts`, `src/particles/pipelines.ts`, and both WGSL files together.

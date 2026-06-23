@@ -47,6 +47,12 @@ fn turbulenceDirection(pos: vec2f, seed: f32, elapsed: f32, noiseScale: f32, flo
   return vec2f(cos(angle), sin(angle));
 }
 
+fn phaseBreakDirection(seed: f32, elapsed: f32) -> vec2f {
+  let angleSeed = sin(seed * 0.0137 + elapsed * 1.618) * 43758.5453;
+  let angle = fract(angleSeed) * 6.2831853;
+  return vec2f(cos(angle), sin(angle));
+}
+
 @compute @workgroup_size(256)
 fn main(@builtin(global_invocation_id) globalId: vec3u) {
   let index = globalId.x;
@@ -73,6 +79,7 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
   let turbulence = sim.field.z;
   let noiseScale = sim.field.w;
   let flowSpeed = sim.flow.x;
+  let diffusion = sim.flow.y;
 
   if (pointerActive) {
     let toPointer = pointer - pos;
@@ -81,15 +88,17 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
     if (distanceToPointer < radius && distanceToPointer > 0.0001) {
       let direction = toPointer / distanceToPointer;
       let falloff = pow(1.0 - distanceToPointer / radius, 1.45);
-      var force = direction * strength * falloff;
+      let coreSoftening = smoothstep(0.02, max(radius * 0.14, 0.021), distanceToPointer);
+      let response = 0.82 + fract(sin(particle.attrs.w * 0.071) * 43758.5453) * 0.36;
+      var force = direction * strength * falloff * coreSoftening * response;
 
       if (mode == 1u) {
-        force = -direction * strength * falloff;
+        force = -direction * strength * falloff * coreSoftening * response;
       }
 
       if (mode == 2u) {
         let orbit = vec2f(-direction.y, direction.x);
-        force = (orbit * 1.35 + direction * 0.18) * strength * falloff;
+        force = (orbit * 1.35 + direction * 0.18) * strength * falloff * coreSoftening * response;
       }
 
       vel = vel + force * dt;
@@ -98,6 +107,10 @@ fn main(@builtin(global_invocation_id) globalId: vec3u) {
 
   let drift = turbulenceDirection(pos, particle.attrs.w, elapsed, noiseScale, flowSpeed);
   vel = vel + drift * turbulence * dt;
+
+  let phaseBreak = phaseBreakDirection(particle.attrs.w, elapsed);
+  let stress = clamp(strength * 0.18 + speed * 0.12 + turbulence * 0.7, 0.0, 1.4);
+  vel = vel + phaseBreak * diffusion * stress * dt;
 
   let drag = pow(damping, dt * 60.0);
   vel = vel * drag;

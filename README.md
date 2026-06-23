@@ -26,6 +26,7 @@ Open `http://127.0.0.1:5187/`.
 - Particle count switches between `16k`, `64k`, and `256k`.
 - Pointer modes switch the mouse/touch field between attract, repel, and orbit.
 - Strength, radius, speed, damping, and turbulence tune the compute shader uniforms.
+- Diffusion adds a small per-particle phase break that reduces dense attractor banding without hiding the underlying flow.
 
 ## Diagnostics
 
