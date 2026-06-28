@@ -2,7 +2,8 @@ export const WORKGROUP_SIZE = 256;
 export const PARTICLE_FLOATS = 12;
 export const PARTICLE_STRIDE_BYTES = PARTICLE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
 export const SIM_UNIFORM_FLOATS = 20;
-export const RENDER_UNIFORM_FLOATS = 8;
+export const RENDER_UNIFORM_FLOATS = 16;
+export const GRID_VERTEX_COUNT = 82;
 export const PARTICLE_COUNTS = [16_384, 65_536, 262_144] as const;
 
 export type PointerMode = "attract" | "repel" | "orbit";
@@ -17,6 +18,10 @@ export interface SimulationConfig {
   radius: number;
   turbulence: number;
   diffusion: number;
+  depth: number;
+  cameraSpin: number;
+  perspective: number;
+  gridOpacity: number;
   noiseScale: number;
   flowSpeed: number;
   pointerMode: PointerMode;
@@ -53,6 +58,10 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   radius: 0.42,
   turbulence: 0.18,
   diffusion: 0.018,
+  depth: 1.35,
+  cameraSpin: 0.16,
+  perspective: 1.35,
+  gridOpacity: 0.42,
   noiseScale: 3.2,
   flowSpeed: 0.28,
   pointerMode: "orbit",

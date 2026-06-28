@@ -10,6 +10,7 @@ export interface ParticleLayouts {
 export interface ParticlePipelineBundle {
   layouts: ParticleLayouts;
   computePipeline: GPUComputePipeline;
+  gridPipeline: GPURenderPipeline;
   renderPipeline: GPURenderPipeline;
 }
 
@@ -31,6 +32,7 @@ export async function createParticlePipelineBundle(
   });
 
   let computePipeline: GPUComputePipeline;
+  let gridPipeline: GPURenderPipeline;
   let renderPipeline: GPURenderPipeline;
 
   try {
@@ -81,6 +83,42 @@ export async function createParticlePipelineBundle(
         topology: "triangle-list",
       },
     });
+
+    gridPipeline = await device.createRenderPipelineAsync({
+      label: "particle reference grid pipeline",
+      layout: device.createPipelineLayout({
+        label: "particle reference grid layout",
+        bindGroupLayouts: [layouts.render],
+      }),
+      vertex: {
+        module: renderModule,
+        entryPoint: "gridVertexMain",
+      },
+      fragment: {
+        module: renderModule,
+        entryPoint: "gridFragmentMain",
+        targets: [
+          {
+            format,
+            blend: {
+              color: {
+                srcFactor: "src-alpha",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+              alpha: {
+                srcFactor: "one",
+                dstFactor: "one-minus-src-alpha",
+                operation: "add",
+              },
+            },
+          },
+        ],
+      },
+      primitive: {
+        topology: "line-list",
+      },
+    });
   } catch (error) {
     const scopedError = await device.popErrorScope().catch(() => null);
     const message = scopedError?.message ?? (error instanceof Error ? error.message : String(error));
@@ -100,6 +138,7 @@ export async function createParticlePipelineBundle(
   return {
     layouts,
     computePipeline,
+    gridPipeline,
     renderPipeline,
   };
 }

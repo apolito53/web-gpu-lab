@@ -1,3 +1,5 @@
+import type { BenchmarkProgress, BenchmarkReport } from "../instrumentation/benchmark";
+import type { FrameMetricSummary } from "../instrumentation/frameMetrics";
 import {
   DEFAULT_CONFIG,
   type DebugMode,
@@ -11,6 +13,8 @@ export interface ControlEvents {
   onConfigChanged: (config: SimulationConfig, key: string) => void;
   onReset: () => void;
   onPointerLockChanged: (locked: boolean) => void;
+  onBenchmarkStart: () => void;
+  onBenchmarkCopy: () => void;
 }
 
 interface ButtonSet<T extends string> {
@@ -24,11 +28,19 @@ export class Controls {
   private readonly fpsValue: HTMLElement;
   private readonly rafFrameValue: HTMLElement;
   private readonly cpuSubmitValue: HTMLElement;
+  private readonly p95FrameValue: HTMLElement;
+  private readonly overBudgetValue: HTMLElement;
   private readonly particleValue: HTMLElement;
   private readonly dispatchValue: HTMLElement;
   private readonly pointerValue: HTMLElement;
   private readonly pauseButton: HTMLButtonElement;
   private readonly lockButton: HTMLButtonElement;
+  private readonly benchmarkValue: HTMLElement;
+  private readonly stableValue: HTMLElement;
+  private readonly tierValue: HTMLElement;
+  private readonly benchmarkProgress: HTMLElement;
+  private readonly runBenchmarkButton: HTMLButtonElement;
+  private readonly copyBenchmarkButton: HTMLButtonElement;
   private readonly countButtons: ButtonSet<string>;
   private readonly modeButtons: ButtonSet<PointerMode>;
   private readonly debugButtons: ButtonSet<DebugMode>;
@@ -48,6 +60,8 @@ export class Controls {
     const fps = createMetric("FPS", "--");
     const rafFrame = createMetric("RAF ms", "--");
     const cpuSubmit = createMetric("CPU submit", "--");
+    const p95Frame = createMetric("p95 RAF", "--");
+    const overBudget = createMetric("Over 60", "--");
     const particles = createMetric("Particles", this.formatCount(this.config.particleCount));
     const dispatch = createMetric("Dispatch", "--");
     const pointer = createMetric("Pointer", "idle");
@@ -56,6 +70,8 @@ export class Controls {
     this.fpsValue = fps.value;
     this.rafFrameValue = rafFrame.value;
     this.cpuSubmitValue = cpuSubmit.value;
+    this.p95FrameValue = p95Frame.value;
+    this.overBudgetValue = overBudget.value;
     this.particleValue = particles.value;
     this.dispatchValue = dispatch.value;
     this.pointerValue = pointer.value;
@@ -67,6 +83,8 @@ export class Controls {
       fps.row,
       rafFrame.row,
       cpuSubmit.row,
+      p95Frame.row,
+      overBudget.row,
       particles.row,
       dispatch.row,
       pointer.row,
@@ -95,8 +113,7 @@ export class Controls {
       PARTICLE_COUNTS.map((count) => String(count)),
       String(this.config.particleCount),
       (value) => {
-        this.config.particleCount = Number(value);
-        this.particleValue.textContent = this.formatCount(this.config.particleCount);
+        this.setParticleCount(Number(value));
         this.emitChange("particleCount");
       },
       (value) => this.formatCount(Number(value)),
@@ -126,6 +143,31 @@ export class Controls {
       titleCase,
     );
     panel.append(this.countButtonsElement("View", this.debugButtons));
+
+    const benchmark = createMetric("Bench", "idle");
+    const stable = createMetric("Stable", "--");
+    const tier = createMetric("Tier", "--");
+    this.benchmarkValue = benchmark.value;
+    this.stableValue = stable.value;
+    this.tierValue = tier.value;
+    this.benchmarkProgress = document.createElement("span");
+    this.benchmarkProgress.className = "benchmark-progress-fill";
+    const benchmarkProgressTrack = document.createElement("div");
+    benchmarkProgressTrack.className = "benchmark-progress-track";
+    benchmarkProgressTrack.append(this.benchmarkProgress);
+    this.runBenchmarkButton = createButton("Bench", () => this.events.onBenchmarkStart());
+    this.copyBenchmarkButton = createButton("Copy", () => this.events.onBenchmarkCopy());
+    this.copyBenchmarkButton.disabled = true;
+    const benchmarkActions = document.createElement("div");
+    benchmarkActions.className = "control-row";
+    benchmarkActions.append(this.runBenchmarkButton, this.copyBenchmarkButton);
+    const benchmarkPanel = document.createElement("div");
+    benchmarkPanel.className = "benchmark-panel";
+    const benchmarkMetrics = document.createElement("div");
+    benchmarkMetrics.className = "metric-grid";
+    benchmarkMetrics.append(benchmark.row, stable.row, tier.row);
+    benchmarkPanel.append(benchmarkMetrics, benchmarkProgressTrack, benchmarkActions);
+    panel.append(benchmarkPanel);
 
     panel.append(
       createSlider(
@@ -201,6 +243,54 @@ export class Controls {
         },
       ),
       createSlider(
+        "Depth",
+        "Sets the z-axis volume that particles can occupy.",
+        0.15,
+        2.4,
+        0.01,
+        this.config.depth,
+        (value) => {
+          this.config.depth = value;
+          this.emitChange("depth");
+        },
+      ),
+      createSlider(
+        "Spin",
+        "Rotates the camera around the particle volume.",
+        0,
+        0.8,
+        0.01,
+        this.config.cameraSpin,
+        (value) => {
+          this.config.cameraSpin = value;
+          this.emitChange("cameraSpin");
+        },
+      ),
+      createSlider(
+        "Perspective",
+        "Controls how strongly near particles scale against far particles.",
+        0.55,
+        2.4,
+        0.01,
+        this.config.perspective,
+        (value) => {
+          this.config.perspective = value;
+          this.emitChange("perspective");
+        },
+      ),
+      createSlider(
+        "Grid",
+        "Controls the opacity of the 3D reference grid.",
+        0,
+        1,
+        0.01,
+        this.config.gridOpacity,
+        (value) => {
+          this.config.gridOpacity = value;
+          this.emitChange("gridOpacity");
+        },
+      ),
+      createSlider(
         "Size",
         "Sets particle sprite diameter in screen pixels before velocity boost.",
         1,
@@ -233,8 +323,53 @@ export class Controls {
     this.dispatchValue.textContent = String(stats.dispatchSize);
   }
 
+  updatePerformance(summary: FrameMetricSummary): void {
+    if (summary.sampleCount < 12) {
+      this.p95FrameValue.textContent = "--";
+      this.overBudgetValue.textContent = "--";
+      return;
+    }
+
+    this.p95FrameValue.textContent = `${summary.p95FrameMs.toFixed(2)} ms`;
+    this.overBudgetValue.textContent = `${Math.round(summary.over60HzBudgetRatio * 100)}%`;
+  }
+
+  updateBenchmark(progress: BenchmarkProgress): void {
+    this.benchmarkValue.textContent = progress.running
+      ? `${progress.stepIndex + 1}/${progress.stepCount} ${progress.label}`
+      : progress.label;
+    this.benchmarkProgress.style.transform = `scaleX(${progress.phaseProgress})`;
+    this.runBenchmarkButton.disabled = progress.running;
+    this.copyBenchmarkButton.disabled = progress.running || !progress.report;
+
+    if (progress.report) {
+      this.stableValue.textContent = this.formatCount(progress.report.maxStableParticleCount);
+      this.tierValue.textContent = progress.report.tier;
+    }
+  }
+
+  updateBenchmarkCopyStatus(label: string, report: BenchmarkReport | null): void {
+    this.benchmarkValue.textContent = label;
+    this.copyBenchmarkButton.disabled = !report;
+  }
+
   updatePointer(active: boolean, locked: boolean): void {
     this.pointerValue.textContent = locked ? "locked" : active ? "live" : "idle";
+  }
+
+  setParticleCount(count: number): void {
+    this.config.particleCount = count;
+    this.particleValue.textContent = this.formatCount(count);
+
+    if (this.countButtons) {
+      this.countButtons.value = String(count);
+      this.syncSegmentedButtons(this.countButtons);
+    }
+  }
+
+  setPaused(paused: boolean): void {
+    this.config.paused = paused;
+    this.syncPauseButton();
   }
 
   private createSegmentedButtons<T extends string>(

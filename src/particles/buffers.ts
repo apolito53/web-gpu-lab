@@ -120,11 +120,15 @@ function createSeededParticles(particleCount: number, seed: number): Float32Arra
   for (let index = 0; index < particleCount; index += 1) {
     const offset = index * PARTICLE_FLOATS;
     const angle = random() * Math.PI * 2;
-    const radius = Math.sqrt(random()) * 0.92;
-    const x = Math.cos(angle) * radius;
-    const y = Math.sin(angle) * radius;
+    const zUnit = random() * 2 - 1;
+    const shellRadius = Math.cbrt(random()) * 0.92;
+    const ringRadius = Math.sqrt(Math.max(1 - zUnit * zUnit, 0));
+    const x = Math.cos(angle) * ringRadius * shellRadius;
+    const y = Math.sin(angle) * ringRadius * shellRadius;
+    const z = zUnit * shellRadius * 1.15;
     const tangentX = -Math.sin(angle);
     const tangentY = Math.cos(angle);
+    const tangentZ = (random() - 0.5) * 0.42;
     const drift = 0.02 + random() * 0.075;
     const jitter = 0.65 + random() * 0.9;
     const hueSeed = random();
@@ -133,11 +137,11 @@ function createSeededParticles(particleCount: number, seed: number): Float32Arra
 
     data[offset + 0] = x;
     data[offset + 1] = y;
-    data[offset + 2] = 0;
+    data[offset + 2] = z;
     data[offset + 3] = jitter;
     data[offset + 4] = tangentX * drift;
     data[offset + 5] = tangentY * drift;
-    data[offset + 6] = 0;
+    data[offset + 6] = tangentZ * drift;
     data[offset + 7] = drift;
     data[offset + 8] = hueSeed;
     data[offset + 9] = random() * life;

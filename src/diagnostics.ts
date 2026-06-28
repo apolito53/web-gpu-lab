@@ -1,4 +1,10 @@
-export type DiagnosticValue = string | number | boolean | null;
+export type DiagnosticValue =
+  | string
+  | number
+  | boolean
+  | null
+  | DiagnosticValue[]
+  | { [key: string]: DiagnosticValue };
 export type DiagnosticPayload = Record<string, DiagnosticValue>;
 
 export interface FrameDiagnosticSample extends DiagnosticPayload {

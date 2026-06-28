@@ -1,6 +1,6 @@
 # WebGPU Particle Lab
 
-Raw WebGPU particle wind tunnel for learning compute passes, storage buffers, explicit bind group layouts, and WGSL without hiding the machinery behind Three.js.
+Raw WebGPU particle wind tunnel for learning compute passes, storage buffers, explicit bind group layouts, WGSL, and cheap 3D projection without hiding the machinery behind Three.js.
 
 ## Run
 
@@ -27,7 +27,13 @@ Open `http://127.0.0.1:5187/`.
 - Pointer modes switch the mouse/touch field between attract, repel, and orbit.
 - Strength, radius, speed, damping, and turbulence tune the compute shader uniforms.
 - Diffusion adds a small per-particle phase break that reduces dense attractor banding without hiding the underlying flow.
+- Depth controls the z-axis simulation volume.
+- Spin rotates the render camera around the volume so the 3D shape is visible.
+- Perspective controls near/far sprite scaling in the projected render pass.
+- Grid controls the opacity of the 3D reference grid overlay.
 - Each slider has a hover/focus `?` tooltip with a short explanation.
+- `Bench` runs a short calibration sweep from `16k` to `1.0m` particles, then restores the prior particle count and pause state.
+- `Copy` writes the last benchmark report JSON to the clipboard.
 
 ## Diagnostics
 
@@ -37,14 +43,21 @@ Open `http://127.0.0.1:5187/`.
 - Recent events: `http://127.0.0.1:5188/events`
 - Retained log file: `logs/events.ndjson`
 
-The browser emits `app.boot`, `webgpu.ready`, `webgpu.deviceLost`, `webgpu.uncapturedError`, `simulation.reset`, `control.changed`, `debug.mode`, and periodic `render.frameSample` events.
+The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLost`, `webgpu.uncapturedError`, `simulation.reset`, `control.changed`, `debug.mode`, periodic `render.frameSample`, and benchmark lifecycle events.
 
 ## Timing
 
 - `FPS` is based on the browser's `requestAnimationFrame` interval, so it reflects display/browser cadence.
 - `RAF ms` is the averaged time between animation callbacks.
+- `p95 RAF` and `Over 60` are rolling RAF-window stats for spotting stutter and 60 Hz budget misses.
 - `CPU submit` is the JavaScript-side command encoding/submission time. It is not GPU execution time.
 - True GPU timing needs timestamp queries and is intentionally left for a later profiling pass.
+
+## Benchmarking
+
+The HUD benchmark is meant as a reusable device calibration harness for future WebGPU experiments. It records the adapter summary, selected WebGPU limits, user agent, DPR, viewport size, baseline simulation and camera settings, and per-count p50/p95 RAF plus CPU-submit timings.
+
+Reports are saved to `localStorage` under `webgpu-particle-lab:lastBenchmark`, emitted as structured diagnostics, and can be copied from the HUD.
 
 ## Validate
 

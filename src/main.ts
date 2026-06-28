@@ -1,5 +1,13 @@
 import { Diagnostics } from "./diagnostics";
-import { initializeWebGpu, WebGpuUnavailableError } from "./gpu/webgpu";
+import { initializeWebGpu, WebGpuUnavailableError, type WebGpuContext } from "./gpu/webgpu";
+import {
+  BENCHMARK_PARTICLE_COUNTS,
+  BenchmarkRunner,
+  type BenchmarkProgress,
+  type BenchmarkReport,
+  type DeviceProfile,
+} from "./instrumentation/benchmark";
+import { RollingFrameMetrics } from "./instrumentation/frameMetrics";
 import { ParticleEngine } from "./particles/frame";
 import type { PointerState, SimulationConfig } from "./particles/types";
 import { Controls } from "./ui/controls";
@@ -17,6 +25,24 @@ let latestConfig: SimulationConfig;
 let engine: ParticleEngine | null = null;
 let animationFrame = 0;
 let lastFrameTime: number | null = null;
+let deviceProfile: DeviceProfile | null = null;
+let benchmarkRunner: BenchmarkRunner | null = null;
+let latestBenchmarkReport: BenchmarkReport | null = null;
+let benchmarkRestoreState: Pick<SimulationConfig, "particleCount" | "paused"> | null = null;
+const frameMetrics = new RollingFrameMetrics();
+
+const DEVICE_LIMIT_KEYS = [
+  "maxTextureDimension2D",
+  "maxBindGroups",
+  "maxStorageBuffersPerShaderStage",
+  "maxUniformBufferBindingSize",
+  "maxStorageBufferBindingSize",
+  "maxBufferSize",
+  "maxComputeWorkgroupStorageSize",
+  "maxComputeInvocationsPerWorkgroup",
+  "maxComputeWorkgroupSizeX",
+  "maxComputeWorkgroupsPerDimension",
+] as const;
 
 const controls = new Controls(hudRoot, {
   onConfigChanged: (config, key) => {
@@ -37,6 +63,10 @@ const controls = new Controls(hudRoot, {
     controls.updatePointer(pointer.active, pointer.locked);
     diagnostics.log("control.changed", { key: "pointerLock", value: locked });
   },
+  onBenchmarkStart: () => startBenchmark(),
+  onBenchmarkCopy: () => {
+    void copyBenchmarkReport();
+  },
 });
 latestConfig = { ...controls.config };
 
@@ -47,7 +77,14 @@ async function boot(): Promise<void> {
   try {
     controls.updateStatus("Requesting GPU");
     const webgpu = await initializeWebGpu(canvas, diagnostics);
+    deviceProfile = createDeviceProfile(webgpu);
     controls.updateStatus(webgpu.adapterSummary);
+    diagnostics.log("webgpu.profile", {
+      adapter: deviceProfile.adapter,
+      preferredFormat: deviceProfile.preferredFormat,
+      features: deviceProfile.features,
+      limits: deviceProfile.limits,
+    });
     engine = await ParticleEngine.create(canvas, webgpu, diagnostics, latestConfig);
     engine.reset(latestConfig);
     lastFrameTime = null;
@@ -76,7 +113,10 @@ function runFrame(now: number): void {
   const deltaSeconds = lastFrameTime === null ? 1 / 60 : (now - lastFrameTime) / 1000;
   lastFrameTime = now;
   const stats = engine.frame(now, deltaSeconds, latestConfig, pointer);
+  const metricSummary = frameMetrics.record(stats);
   controls.updateStats(stats);
+  controls.updatePerformance(metricSummary);
+  updateBenchmark(now, stats);
   diagnostics.logFrameSample(now, {
     fps: stats.fps,
     rafFrameMs: stats.rafFrameMs,
@@ -88,6 +128,175 @@ function runFrame(now: number): void {
     paused: stats.paused,
   });
   animationFrame = requestAnimationFrame(runFrame);
+}
+
+function startBenchmark(): void {
+  if (!engine || !deviceProfile) {
+    controls.updateBenchmarkCopyStatus("not ready", latestBenchmarkReport);
+    return;
+  }
+
+  if (benchmarkRunner) {
+    return;
+  }
+
+  benchmarkRestoreState = {
+    particleCount: latestConfig.particleCount,
+    paused: latestConfig.paused,
+  };
+  benchmarkRunner = new BenchmarkRunner(deviceProfile, latestConfig, performance.now());
+  latestConfig = {
+    ...latestConfig,
+    particleCount: benchmarkRunner.currentParticleCount,
+    paused: false,
+  };
+  controls.setParticleCount(benchmarkRunner.currentParticleCount);
+  controls.setPaused(false);
+  controls.updateBenchmark({
+    running: true,
+    label: `${formatCount(benchmarkRunner.currentParticleCount)} warmup`,
+    stepIndex: 0,
+    stepCount: BENCHMARK_PARTICLE_COUNTS.length,
+    particleCount: benchmarkRunner.currentParticleCount,
+    phase: "warmup",
+    phaseProgress: 0,
+  });
+  diagnostics.log("benchmark.started", {
+    particleCounts: [...BENCHMARK_PARTICLE_COUNTS],
+    baselineParticleCount: benchmarkRestoreState.particleCount,
+    restoredPausedState: benchmarkRestoreState.paused,
+    adapter: deviceProfile.adapter,
+  });
+}
+
+function updateBenchmark(now: number, stats: ReturnType<ParticleEngine["frame"]>): void {
+  if (!benchmarkRunner) {
+    return;
+  }
+
+  const progress = benchmarkRunner.record(now, stats);
+
+  if (progress.stepResult) {
+    diagnostics.log("benchmark.step", {
+      particleCount: progress.stepResult.particleCount,
+      p50FrameMs: progress.stepResult.p50FrameMs,
+      p95FrameMs: progress.stepResult.p95FrameMs,
+      averageFps: progress.stepResult.averageFps,
+      p95CpuSubmitMs: progress.stepResult.p95CpuSubmitMs,
+      stable60Hz: progress.stepResult.stable60Hz,
+    });
+  }
+
+  if (progress.running) {
+    latestConfig = {
+      ...latestConfig,
+      particleCount: progress.particleCount,
+    };
+    controls.setParticleCount(progress.particleCount);
+    controls.updateBenchmark(progress);
+    return;
+  }
+
+  finishBenchmark(progress);
+}
+
+function finishBenchmark(progress: BenchmarkProgress): void {
+  benchmarkRunner = null;
+  latestBenchmarkReport = progress.report ?? null;
+
+  if (benchmarkRestoreState) {
+    latestConfig = {
+      ...latestConfig,
+      particleCount: benchmarkRestoreState.particleCount,
+      paused: benchmarkRestoreState.paused,
+    };
+    controls.setParticleCount(benchmarkRestoreState.particleCount);
+    controls.setPaused(benchmarkRestoreState.paused);
+    benchmarkRestoreState = null;
+  }
+
+  controls.updateBenchmark(progress);
+
+  if (latestBenchmarkReport) {
+    persistBenchmarkReport(latestBenchmarkReport);
+    diagnostics.log("benchmark.completed", {
+      tier: latestBenchmarkReport.tier,
+      maxStableParticleCount: latestBenchmarkReport.maxStableParticleCount,
+      recommendedParticleCount: latestBenchmarkReport.recommendedParticleCount,
+      steps: latestBenchmarkReport.steps.map((step) => ({
+        particleCount: step.particleCount,
+        p95FrameMs: step.p95FrameMs,
+        p95CpuSubmitMs: step.p95CpuSubmitMs,
+        stable60Hz: step.stable60Hz,
+      })),
+    });
+  }
+}
+
+async function copyBenchmarkReport(): Promise<void> {
+  if (!latestBenchmarkReport) {
+    controls.updateBenchmarkCopyStatus("no report", null);
+    return;
+  }
+
+  try {
+    await navigator.clipboard.writeText(JSON.stringify(latestBenchmarkReport, null, 2));
+    controls.updateBenchmarkCopyStatus("copied", latestBenchmarkReport);
+    diagnostics.log("benchmark.copied", {
+      tier: latestBenchmarkReport.tier,
+      maxStableParticleCount: latestBenchmarkReport.maxStableParticleCount,
+    });
+  } catch (error) {
+    controls.updateBenchmarkCopyStatus("copy failed", latestBenchmarkReport);
+    diagnostics.log("benchmark.copyFailed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function persistBenchmarkReport(report: BenchmarkReport): void {
+  try {
+    localStorage.setItem("webgpu-particle-lab:lastBenchmark", JSON.stringify(report));
+  } catch (error) {
+    diagnostics.log("benchmark.persistFailed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+function createDeviceProfile(webgpu: WebGpuContext): DeviceProfile {
+  return {
+    adapter: webgpu.adapterSummary,
+    preferredFormat: webgpu.format,
+    userAgent: navigator.userAgent,
+    devicePixelRatio: window.devicePixelRatio || 1,
+    viewportWidth: window.innerWidth,
+    viewportHeight: window.innerHeight,
+    features: Array.from(webgpu.device.features).map(String).sort(),
+    limits: pickDeviceLimits(webgpu.device.limits),
+  };
+}
+
+function pickDeviceLimits(limits: GPUSupportedLimits): Record<string, number> {
+  const picked: Record<string, number> = {};
+
+  for (const key of DEVICE_LIMIT_KEYS) {
+    const value = limits[key as keyof GPUSupportedLimits];
+
+    if (typeof value === "number") {
+      picked[key] = value;
+    }
+  }
+
+  return picked;
+}
+
+function formatCount(value: number): string {
+  return value >= 1_000_000
+    ? `${Number((value / 1_000_000).toFixed(1))}m`
+    : value >= 1000
+      ? `${Math.round(value / 1000)}k`
+      : String(value);
 }
 
 function installPointerInput(): void {

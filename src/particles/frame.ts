@@ -5,6 +5,7 @@ import { createParticleResources, destroyParticleResources, type ParticleResourc
 import {
   debugModeIndex,
   type FrameStats,
+  GRID_VERTEX_COUNT,
   type PointerState,
   pointerModeIndex,
   RENDER_UNIFORM_FLOATS,
@@ -21,8 +22,6 @@ export class ParticleEngine {
   private resources: ParticleResources;
   private activeReadIndex: 0 | 1 = 0;
   private seed = 0x51a7f13;
-  private lastCanvasWidth = 1;
-  private lastCanvasHeight = 1;
 
   private constructor(
     private readonly canvas: HTMLCanvasElement,
@@ -67,8 +66,6 @@ export class ParticleEngine {
     }
 
     const canvasSize = configureCanvasSize(this.canvas, this.webgpu);
-    this.lastCanvasWidth = canvasSize.width;
-    this.lastCanvasHeight = canvasSize.height;
 
     if (canvasSize.changed) {
       this.diagnostics.log("resize", {
@@ -85,7 +82,7 @@ export class ParticleEngine {
     const renderIndex = config.paused ? this.activeReadIndex : this.flipIndex(this.activeReadIndex);
 
     this.writeSimulationUniforms(now, dt, config, pointer);
-    this.writeRenderUniforms(canvasSize.width, canvasSize.height, canvasSize.dpr, config);
+    this.writeRenderUniforms(now, canvasSize.width, canvasSize.height, canvasSize.dpr, config);
 
     const commandEncoder = this.webgpu.device.createCommandEncoder({
       label: "particle frame command encoder",
@@ -112,9 +109,15 @@ export class ParticleEngine {
       ],
     });
 
-    renderPass.setPipeline(this.pipelines.renderPipeline);
     renderPass.setBindGroup(0, this.resources.renderBindGroups[renderIndex]);
+    renderPass.setPipeline(this.pipelines.renderPipeline);
     renderPass.draw(6, config.particleCount);
+
+    if (config.gridOpacity > 0.001) {
+      renderPass.setPipeline(this.pipelines.gridPipeline);
+      renderPass.draw(GRID_VERTEX_COUNT);
+    }
+
     renderPass.end();
 
     this.webgpu.device.queue.submit([commandEncoder.finish()]);
@@ -179,13 +182,19 @@ export class ParticleEngine {
     this.simUniforms[15] = config.noiseScale;
     this.simUniforms[16] = config.flowSpeed;
     this.simUniforms[17] = config.diffusion;
-    this.simUniforms[18] = this.lastCanvasWidth;
-    this.simUniforms[19] = this.lastCanvasHeight;
+    this.simUniforms[18] = config.depth;
+    this.simUniforms[19] = 0;
 
     this.webgpu.device.queue.writeBuffer(this.resources.simUniformBuffer, 0, this.simUniforms);
   }
 
-  private writeRenderUniforms(width: number, height: number, dpr: number, config: SimulationConfig): void {
+  private writeRenderUniforms(
+    now: number,
+    width: number,
+    height: number,
+    dpr: number,
+    config: SimulationConfig,
+  ): void {
     this.renderUniforms[0] = width;
     this.renderUniforms[1] = height;
     this.renderUniforms[2] = dpr;
@@ -194,6 +203,14 @@ export class ParticleEngine {
     this.renderUniforms[5] = config.strength;
     this.renderUniforms[6] = config.radius;
     this.renderUniforms[7] = config.paused ? 1 : 0;
+    this.renderUniforms[8] = now / 1000;
+    this.renderUniforms[9] = config.cameraSpin;
+    this.renderUniforms[10] = config.depth;
+    this.renderUniforms[11] = config.perspective;
+    this.renderUniforms[12] = config.gridOpacity;
+    this.renderUniforms[13] = 1.12;
+    this.renderUniforms[14] = 0;
+    this.renderUniforms[15] = 0;
 
     this.webgpu.device.queue.writeBuffer(this.resources.renderUniformBuffer, 0, this.renderUniforms);
   }
