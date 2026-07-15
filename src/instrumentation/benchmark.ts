@@ -1,5 +1,5 @@
 import { summarizeFrameSamples, type FrameMetricSummary } from "./frameMetrics";
-import type { FrameStats, SimulationConfig } from "../particles/types";
+import type { FrameStats, SimulationConfig, TrailTargetInfo } from "../particles/types";
 
 export const BENCHMARK_PARTICLE_COUNTS = [
   16_384,
@@ -33,6 +33,7 @@ export interface BenchmarkStepResult {
   p95CpuSubmitMs: number;
   over60HzBudgetRatio: number;
   stable60Hz: boolean;
+  trailTarget: TrailTargetInfo | null;
 }
 
 export interface BenchmarkReport {
@@ -57,6 +58,9 @@ export interface BenchmarkReport {
     | "gridOpacity"
     | "trailOpacity"
     | "trailDecay"
+    | "trailExposure"
+    | "trailFormatMode"
+    | "trailResolutionScale"
     | "particleSize"
     | "pointerMode"
     | "debugMode"
@@ -97,6 +101,7 @@ export class BenchmarkRunner {
   private stepIndex = 0;
   private stepStartedAt = 0;
   private samples: BenchmarkSample[] = [];
+  private currentTrailTarget: TrailTargetInfo | null = null;
 
   constructor(
     private readonly device: DeviceProfile,
@@ -116,6 +121,9 @@ export class BenchmarkRunner {
       gridOpacity: baselineConfig.gridOpacity,
       trailOpacity: baselineConfig.trailOpacity,
       trailDecay: baselineConfig.trailDecay,
+      trailExposure: baselineConfig.trailExposure,
+      trailFormatMode: baselineConfig.trailFormatMode,
+      trailResolutionScale: baselineConfig.trailResolutionScale,
       particleSize: baselineConfig.particleSize,
       pointerMode: baselineConfig.pointerMode,
       debugMode: baselineConfig.debugMode,
@@ -138,6 +146,7 @@ export class BenchmarkRunner {
         rafFrameMs: stats.rafFrameMs,
         cpuSubmitMs: stats.cpuSubmitMs,
       });
+      this.currentTrailTarget = stats.trailTarget ? { ...stats.trailTarget } : null;
     }
 
     if (elapsedMs < BENCHMARK_WARMUP_MS + BENCHMARK_SAMPLE_MS) {
@@ -187,12 +196,13 @@ export class BenchmarkRunner {
     this.stepIndex = stepIndex;
     this.stepStartedAt = now;
     this.samples = [];
+    this.currentTrailTarget = null;
   }
 
   private finishStep(): BenchmarkStepResult {
     const summary = summarizeFrameSamples(this.samples);
     const particleCount = this.currentParticleCount;
-    const result = createStepResult(particleCount, summary);
+    const result = createStepResult(particleCount, summary, this.currentTrailTarget);
     this.results.push(result);
     return result;
   }
@@ -226,7 +236,11 @@ export class BenchmarkRunner {
   }
 }
 
-function createStepResult(particleCount: number, summary: FrameMetricSummary): BenchmarkStepResult {
+function createStepResult(
+  particleCount: number,
+  summary: FrameMetricSummary,
+  trailTarget: TrailTargetInfo | null,
+): BenchmarkStepResult {
   const stable60Hz =
     summary.sampleCount > 0
     && summary.p95FrameMs <= STABLE_P95_60HZ_MS
@@ -245,6 +259,7 @@ function createStepResult(particleCount: number, summary: FrameMetricSummary): B
     p95CpuSubmitMs: Number(summary.p95CpuSubmitMs.toFixed(3)),
     over60HzBudgetRatio: Number(summary.over60HzBudgetRatio.toFixed(3)),
     stable60Hz,
+    trailTarget,
   };
 }
 

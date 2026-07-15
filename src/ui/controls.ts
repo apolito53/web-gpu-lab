@@ -7,6 +7,8 @@ import {
   PARTICLE_COUNTS,
   type PointerMode,
   type SimulationConfig,
+  type TrailFormatMode,
+  TRAIL_RESOLUTION_SCALES,
 } from "../particles/types";
 
 export interface ControlEvents {
@@ -44,6 +46,8 @@ export class Controls {
   private readonly countButtons: ButtonSet<string>;
   private readonly modeButtons: ButtonSet<PointerMode>;
   private readonly debugButtons: ButtonSet<DebugMode>;
+  private readonly trailFormatButtons: ButtonSet<TrailFormatMode>;
+  private readonly trailScaleButtons: ButtonSet<string>;
 
   constructor(root: HTMLElement, private readonly events: ControlEvents) {
     root.replaceChildren();
@@ -143,6 +147,30 @@ export class Controls {
       titleCase,
     );
     panel.append(this.countButtonsElement("View", this.debugButtons));
+
+    this.trailFormatButtons = this.createSegmentedButtons(
+      "Target",
+      ["compat", "hdr"],
+      this.config.trailFormatMode,
+      (value) => {
+        this.config.trailFormatMode = value;
+        this.emitChange("trailFormatMode");
+      },
+      (value) => value === "hdr" ? "HDR" : "8-bit",
+    );
+    panel.append(this.countButtonsElement("Target", this.trailFormatButtons));
+
+    this.trailScaleButtons = this.createSegmentedButtons(
+      "Trail res",
+      TRAIL_RESOLUTION_SCALES.map(String),
+      String(this.config.trailResolutionScale),
+      (value) => {
+        this.config.trailResolutionScale = Number(value) as SimulationConfig["trailResolutionScale"];
+        this.emitChange("trailResolutionScale");
+      },
+      (value) => `${value}x`,
+    );
+    panel.append(this.countButtonsElement("Trail res", this.trailScaleButtons));
 
     const benchmark = createMetric("Bench", "idle");
     const stable = createMetric("Stable", "--");
@@ -315,6 +343,18 @@ export class Controls {
         },
       ),
       createSlider(
+        "Exposure",
+        "Controls trail brightness before HDR tone mapping or 8-bit compositing.",
+        0.25,
+        3,
+        0.05,
+        this.config.trailExposure,
+        (value) => {
+          this.config.trailExposure = value;
+          this.emitChange("trailExposure");
+        },
+      ),
+      createSlider(
         "Size",
         "Sets particle sprite diameter in screen pixels before velocity boost.",
         1,
@@ -332,11 +372,29 @@ export class Controls {
     this.countButtons.value = String(this.config.particleCount);
     this.modeButtons.value = this.config.pointerMode;
     this.debugButtons.value = this.config.debugMode;
+    this.trailFormatButtons.value = this.config.trailFormatMode;
+    this.trailScaleButtons.value = String(this.config.trailResolutionScale);
     this.syncPauseButton();
   }
 
   updateStatus(status: string): void {
     this.statusValue.textContent = status;
+  }
+
+  setHdrTrailsAvailable(available: boolean): void {
+    const hdrButton = this.trailFormatButtons.buttons.get("hdr");
+
+    if (hdrButton) {
+      hdrButton.disabled = !available;
+      hdrButton.title = available ? "" : "HDR trail targets are unavailable on this device.";
+    }
+
+    if (!available && this.config.trailFormatMode === "hdr") {
+      this.config.trailFormatMode = "compat";
+      this.trailFormatButtons.value = "compat";
+      this.syncSegmentedButtons(this.trailFormatButtons);
+      this.emitChange("trailFormatMode");
+    }
   }
 
   updateStats(stats: FrameStats): void {

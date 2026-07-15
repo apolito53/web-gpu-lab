@@ -2,7 +2,7 @@ import type { Diagnostics } from "../diagnostics";
 import computeShaderSource from "../shaders/particles.compute.wgsl?raw";
 import renderShaderSource from "../shaders/particles.render.wgsl?raw";
 import trailShaderSource from "../shaders/trails.render.wgsl?raw";
-import { TRAIL_FORMAT } from "./types";
+import { TRAIL_FORMATS, type TrailFormatMode } from "./types";
 
 export interface ParticleLayouts {
   compute: GPUBindGroupLayout;
@@ -10,14 +10,20 @@ export interface ParticleLayouts {
   trail: GPUBindGroupLayout;
 }
 
+export interface TrailPipelineSet {
+  mode: TrailFormatMode;
+  format: GPUTextureFormat;
+  fadePipeline: GPURenderPipeline;
+  particlePipeline: GPURenderPipeline;
+}
+
 export interface ParticlePipelineBundle {
   layouts: ParticleLayouts;
   computePipeline: GPUComputePipeline;
   gridPipeline: GPURenderPipeline;
   renderPipeline: GPURenderPipeline;
-  trailFadePipeline: GPURenderPipeline;
   trailCompositePipeline: GPURenderPipeline;
-  trailParticlePipeline: GPURenderPipeline;
+  trailPipelines: Record<TrailFormatMode, TrailPipelineSet | null>;
 }
 
 export async function createParticlePipelineBundle(
@@ -44,9 +50,8 @@ export async function createParticlePipelineBundle(
   let computePipeline: GPUComputePipeline;
   let gridPipeline: GPURenderPipeline;
   let renderPipeline: GPURenderPipeline;
-  let trailFadePipeline: GPURenderPipeline;
   let trailCompositePipeline: GPURenderPipeline;
-  let trailParticlePipeline: GPURenderPipeline;
+  let compatTrailPipelines: TrailPipelineSet;
 
   try {
     computePipeline = await device.createComputePipelineAsync({
@@ -70,22 +75,12 @@ export async function createParticlePipelineBundle(
       "particle render pipeline",
     );
 
-    trailParticlePipeline = await createParticleRenderPipeline(
+    compatTrailPipelines = await createTrailTargetPipelines(
       device,
       renderModule,
-      layouts.render,
-      TRAIL_FORMAT,
-      "trailFragmentMain",
-      "particle trail render pipeline",
-    );
-
-    trailFadePipeline = await createTrailPipeline(
-      device,
       trailModule,
-      layouts.trail,
-      TRAIL_FORMAT,
-      "fadeFragmentMain",
-      "trail fade pipeline",
+      layouts,
+      "compat",
     );
 
     trailCompositePipeline = await createTrailPipeline(
@@ -148,15 +143,90 @@ export async function createParticlePipelineBundle(
     throw new Error(scopedError.message);
   }
 
+  const hdrTrailPipelines = await tryCreateOptionalTrailPipelines(
+    device,
+    renderModule,
+    trailModule,
+    layouts,
+    "hdr",
+    diagnostics,
+  );
+
   return {
     layouts,
     computePipeline,
     gridPipeline,
     renderPipeline,
-    trailFadePipeline,
     trailCompositePipeline,
-    trailParticlePipeline,
+    trailPipelines: {
+      compat: compatTrailPipelines,
+      hdr: hdrTrailPipelines,
+    },
   };
+}
+
+async function createTrailTargetPipelines(
+  device: GPUDevice,
+  renderModule: GPUShaderModule,
+  trailModule: GPUShaderModule,
+  layouts: ParticleLayouts,
+  mode: TrailFormatMode,
+): Promise<TrailPipelineSet> {
+  const format = TRAIL_FORMATS[mode];
+  const label = mode === "hdr" ? "HDR" : "8-bit";
+  const [particlePipeline, fadePipeline] = await Promise.all([
+    createParticleRenderPipeline(
+      device,
+      renderModule,
+      layouts.render,
+      format,
+      "trailFragmentMain",
+      `${label} particle trail render pipeline`,
+    ),
+    createTrailPipeline(
+      device,
+      trailModule,
+      layouts.trail,
+      format,
+      "fadeFragmentMain",
+      `${label} trail fade pipeline`,
+    ),
+  ]);
+
+  return { mode, format, fadePipeline, particlePipeline };
+}
+
+async function tryCreateOptionalTrailPipelines(
+  device: GPUDevice,
+  renderModule: GPUShaderModule,
+  trailModule: GPUShaderModule,
+  layouts: ParticleLayouts,
+  mode: TrailFormatMode,
+  diagnostics: Diagnostics,
+): Promise<TrailPipelineSet | null> {
+  device.pushErrorScope("validation");
+  let pipelines: TrailPipelineSet | null = null;
+  let thrownMessage: string | null = null;
+
+  try {
+    pipelines = await createTrailTargetPipelines(device, renderModule, trailModule, layouts, mode);
+  } catch (error) {
+    thrownMessage = error instanceof Error ? error.message : String(error);
+  }
+
+  const scopedError = await device.popErrorScope().catch(() => null);
+  const message = scopedError?.message ?? thrownMessage;
+
+  if (message || !pipelines) {
+    diagnostics.log("trails.formatUnsupported", {
+      mode,
+      format: TRAIL_FORMATS[mode],
+      message: message ?? "Pipeline creation returned no result.",
+    });
+    return null;
+  }
+
+  return pipelines;
 }
 
 function createParticleRenderPipeline(

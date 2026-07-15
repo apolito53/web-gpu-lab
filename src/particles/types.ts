@@ -2,13 +2,29 @@ export const WORKGROUP_SIZE = 256;
 export const PARTICLE_FLOATS = 12;
 export const PARTICLE_STRIDE_BYTES = PARTICLE_FLOATS * Float32Array.BYTES_PER_ELEMENT;
 export const SIM_UNIFORM_FLOATS = 20;
-export const RENDER_UNIFORM_FLOATS = 20;
+export const RENDER_UNIFORM_FLOATS = 24;
 export const GRID_VERTEX_COUNT = 82;
-export const TRAIL_FORMAT: GPUTextureFormat = "rgba8unorm";
 export const PARTICLE_COUNTS = [16_384, 65_536, 262_144] as const;
+export const TRAIL_FORMATS = {
+  compat: "rgba8unorm",
+  hdr: "rgba16float",
+} as const satisfies Record<TrailFormatMode, GPUTextureFormat>;
+export const TRAIL_RESOLUTION_SCALES = [0.5, 0.75, 1] as const;
 
 export type PointerMode = "attract" | "repel" | "orbit";
 export type DebugMode = "beauty" | "velocity" | "density";
+export type TrailFormatMode = "compat" | "hdr";
+export type TrailResolutionScale = (typeof TRAIL_RESOLUTION_SCALES)[number];
+
+export interface TrailTargetInfo {
+  requestedMode: TrailFormatMode;
+  mode: TrailFormatMode;
+  format: GPUTextureFormat;
+  scale: TrailResolutionScale;
+  width: number;
+  height: number;
+  estimatedBytes: number;
+}
 
 export interface SimulationConfig {
   particleCount: number;
@@ -25,6 +41,9 @@ export interface SimulationConfig {
   gridOpacity: number;
   trailOpacity: number;
   trailDecay: number;
+  trailExposure: number;
+  trailFormatMode: TrailFormatMode;
+  trailResolutionScale: TrailResolutionScale;
   noiseScale: number;
   flowSpeed: number;
   pointerMode: PointerMode;
@@ -50,6 +69,7 @@ export interface FrameStats {
   pointerMode: PointerMode;
   debugMode: DebugMode;
   paused: boolean;
+  trailTarget: TrailTargetInfo | null;
 }
 
 export const DEFAULT_CONFIG: SimulationConfig = {
@@ -67,6 +87,9 @@ export const DEFAULT_CONFIG: SimulationConfig = {
   gridOpacity: 0.42,
   trailOpacity: 0.72,
   trailDecay: 0.965,
+  trailExposure: 1,
+  trailFormatMode: "compat",
+  trailResolutionScale: 1,
   noiseScale: 3.2,
   flowSpeed: 0.28,
   pointerMode: "orbit",

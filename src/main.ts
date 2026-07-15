@@ -1,4 +1,4 @@
-import { Diagnostics } from "./diagnostics";
+import { Diagnostics, type DiagnosticPayload } from "./diagnostics";
 import { initializeWebGpu, WebGpuUnavailableError, type WebGpuContext } from "./gpu/webgpu";
 import {
   BENCHMARK_PARTICLE_COUNTS,
@@ -86,6 +86,12 @@ async function boot(): Promise<void> {
       limits: deviceProfile.limits,
     });
     engine = await ParticleEngine.create(canvas, webgpu, diagnostics, latestConfig);
+    const hdrTrailsAvailable = engine.supportsTrailFormat("hdr");
+    controls.setHdrTrailsAvailable(hdrTrailsAvailable);
+    diagnostics.log("trails.capabilities", {
+      compat: engine.supportsTrailFormat("compat"),
+      hdr: hdrTrailsAvailable,
+    });
     engine.reset(latestConfig);
     lastFrameTime = null;
     animationFrame = requestAnimationFrame(runFrame);
@@ -126,6 +132,7 @@ function runFrame(now: number): void {
     canvasWidth: stats.canvasWidth,
     canvasHeight: stats.canvasHeight,
     paused: stats.paused,
+    trailTarget: toDiagnosticTrailTarget(stats.trailTarget),
   });
   animationFrame = requestAnimationFrame(runFrame);
 }
@@ -184,6 +191,7 @@ function updateBenchmark(now: number, stats: ReturnType<ParticleEngine["frame"]>
       averageFps: progress.stepResult.averageFps,
       p95CpuSubmitMs: progress.stepResult.p95CpuSubmitMs,
       stable60Hz: progress.stepResult.stable60Hz,
+      trailTarget: toDiagnosticTrailTarget(progress.stepResult.trailTarget),
     });
   }
 
@@ -228,6 +236,7 @@ function finishBenchmark(progress: BenchmarkProgress): void {
         p95FrameMs: step.p95FrameMs,
         p95CpuSubmitMs: step.p95CpuSubmitMs,
         stable60Hz: step.stable60Hz,
+        trailTarget: toDiagnosticTrailTarget(step.trailTarget),
       })),
     });
   }
@@ -297,6 +306,12 @@ function formatCount(value: number): string {
     : value >= 1000
       ? `${Math.round(value / 1000)}k`
       : String(value);
+}
+
+function toDiagnosticTrailTarget(
+  target: ReturnType<ParticleEngine["frame"]>["trailTarget"],
+): DiagnosticPayload | null {
+  return target ? { ...target } : null;
 }
 
 function installPointerInput(): void {

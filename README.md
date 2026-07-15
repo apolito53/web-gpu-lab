@@ -33,6 +33,9 @@ Open `http://127.0.0.1:5187/`.
 - Grid controls the opacity of the 3D reference grid overlay.
 - Trails controls offscreen trail opacity. Set it to `0` for the direct particle-to-canvas render path.
 - Decay controls how quickly trail history fades between frames.
+- Exposure controls history brightness before HDR tone mapping or 8-bit compositing.
+- Target switches between the mobile-friendly `rgba8unorm` path and an HDR `rgba16float` path when supported.
+- Trail res scales only the history targets to `0.5x`, `0.75x`, or `1x`; current particles and the grid remain full-resolution.
 - Each slider has a hover/focus `?` tooltip with a short explanation.
 - `Bench` runs a short calibration sweep from `16k` to `1.0m` particles, then restores the prior particle count and pause state.
 - `Copy` writes the last benchmark report JSON to the clipboard.
@@ -59,7 +62,7 @@ The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLo
 
 The HUD benchmark is meant as a reusable device calibration harness for future WebGPU experiments. It records the adapter summary, selected WebGPU limits, user agent, DPR, viewport size, baseline simulation and camera settings, and per-count p50/p95 RAF plus CPU-submit timings.
 
-Reports are saved to `localStorage` under `webgpu-particle-lab:lastBenchmark`, emitted as structured diagnostics, and can be copied from the HUD.
+Reports are saved to `localStorage` under `webgpu-particle-lab:lastBenchmark`, emitted as structured diagnostics, and can be copied from the HUD. Each step records the resolved trail format, scale, dimensions, and estimated allocation when trails are active.
 
 ## Trail Rendering
 
@@ -71,7 +74,9 @@ When `Trails` is above `0`, particles render through a multi-pass path:
 - draw the current particles directly so the live frame stays crisp
 - draw the grid overlay last so it stays crisp
 
-The fullscreen passes preserve framebuffer orientation, so ping-pong history does not alternate or mirror between frames. Trail targets currently use `rgba8unorm` for broad desktop and mobile compatibility. When `Trails` is `0`, the renderer skips trail textures and uses the direct canvas path.
+The fullscreen passes preserve framebuffer orientation, so ping-pong history does not alternate or mirror between frames. The compatibility target uses `rgba8unorm`; the HDR target uses `rgba16float` with exponential tone mapping. HDR pipeline creation is isolated behind a validation scope, so unsupported devices keep the 8-bit path instead of failing boot. When `Trails` is `0`, the renderer skips trail textures and uses the direct canvas path.
+
+Two ping-pong targets are allocated. Estimated trail memory is therefore `width * height * bytesPerPixel * 2`, before implementation-specific overhead: 4 bytes per pixel for 8-bit targets and 8 bytes per pixel for HDR targets.
 
 ## Validate
 

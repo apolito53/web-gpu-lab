@@ -12,9 +12,15 @@ import {
   RENDER_UNIFORM_FLOATS,
   type SimulationConfig,
   SIM_UNIFORM_FLOATS,
+  type TrailFormatMode,
+  type TrailTargetInfo,
   WORKGROUP_SIZE,
 } from "./types";
-import { createParticlePipelineBundle, type ParticlePipelineBundle } from "./pipelines";
+import {
+  createParticlePipelineBundle,
+  type ParticlePipelineBundle,
+  type TrailPipelineSet,
+} from "./pipelines";
 
 export class ParticleEngine {
   private readonly simUniforms = new Float32Array(SIM_UNIFORM_FLOATS);
@@ -52,6 +58,10 @@ export class ParticleEngine {
     return new ParticleEngine(canvas, webgpu, pipelines, diagnostics, initialConfig);
   }
 
+  supportsTrailFormat(mode: TrailFormatMode): boolean {
+    return this.pipelines.trailPipelines[mode] !== null;
+  }
+
   reset(config: SimulationConfig): void {
     this.seed = (this.seed + 0x9e3779b9) >>> 0;
     this.replaceResources(config.particleCount);
@@ -86,8 +96,9 @@ export class ParticleEngine {
     const dispatchSize = Math.ceil(config.particleCount / WORKGROUP_SIZE);
     const renderIndex = config.paused ? this.activeReadIndex : this.flipIndex(this.activeReadIndex);
     const trailsEnabled = config.trailOpacity > 0.001;
+    const trailPipelines = this.resolveTrailPipelines(config.trailFormatMode);
     const trailResources = trailsEnabled
-      ? this.ensureTrailResources(canvasSize.width, canvasSize.height)
+      ? this.ensureTrailResources(canvasSize.width, canvasSize.height, config, trailPipelines)
       : null;
 
     if (!trailsEnabled) {
@@ -102,6 +113,7 @@ export class ParticleEngine {
       canvasSize.dpr,
       dt,
       trailResources !== null && this.needsTrailClear,
+      trailResources?.mode ?? "compat",
       config,
     );
 
@@ -120,7 +132,14 @@ export class ParticleEngine {
     const textureView = this.webgpu.canvasContext.getCurrentTexture().createView();
 
     if (trailResources) {
-      this.renderTrailFrame(commandEncoder, textureView, trailResources, renderIndex, config);
+      this.renderTrailFrame(
+        commandEncoder,
+        textureView,
+        trailResources,
+        trailPipelines,
+        renderIndex,
+        config,
+      );
     } else {
       this.renderDirectFrame(commandEncoder, textureView, renderIndex, config);
     }
@@ -145,6 +164,7 @@ export class ParticleEngine {
       pointerMode: config.pointerMode,
       debugMode: config.debugMode,
       paused: config.paused,
+      trailTarget: trailResources ? this.describeTrailTarget(trailResources) : null,
     };
   }
 
@@ -203,6 +223,7 @@ export class ParticleEngine {
     dpr: number,
     deltaSeconds: number,
     clearTrail: boolean,
+    trailMode: TrailFormatMode,
     config: SimulationConfig,
   ): void {
     this.renderUniforms[0] = width;
@@ -225,6 +246,10 @@ export class ParticleEngine {
     this.renderUniforms[17] = config.trailDecay;
     this.renderUniforms[18] = deltaSeconds * 60;
     this.renderUniforms[19] = clearTrail ? 1 : 0;
+    this.renderUniforms[20] = config.trailExposure;
+    this.renderUniforms[21] = trailMode === "hdr" ? 1 : 0;
+    this.renderUniforms[22] = config.trailResolutionScale;
+    this.renderUniforms[23] = 0;
 
     this.webgpu.device.queue.writeBuffer(this.resources.renderUniformBuffer, 0, this.renderUniforms);
   }
@@ -258,6 +283,7 @@ export class ParticleEngine {
     commandEncoder: GPUCommandEncoder,
     textureView: GPUTextureView,
     trailResources: TrailResources,
+    trailPipelines: TrailPipelineSet,
     renderIndex: 0 | 1,
     config: SimulationConfig,
   ): void {
@@ -278,7 +304,7 @@ export class ParticleEngine {
           },
         ],
       });
-      fadePass.setPipeline(this.pipelines.trailFadePipeline);
+      fadePass.setPipeline(trailPipelines.fadePipeline);
       fadePass.setBindGroup(0, trailResources.bindGroups[this.trailReadIndex]);
       fadePass.draw(3);
       fadePass.end();
@@ -294,7 +320,7 @@ export class ParticleEngine {
         ],
       });
       particleTrailPass.setBindGroup(0, this.resources.renderBindGroups[renderIndex]);
-      particleTrailPass.setPipeline(this.pipelines.trailParticlePipeline);
+      particleTrailPass.setPipeline(trailPipelines.particlePipeline);
       particleTrailPass.draw(6, config.particleCount);
       particleTrailPass.end();
 
@@ -336,11 +362,22 @@ export class ParticleEngine {
     renderPass.draw(GRID_VERTEX_COUNT);
   }
 
-  private ensureTrailResources(width: number, height: number): TrailResources {
+  private ensureTrailResources(
+    width: number,
+    height: number,
+    config: SimulationConfig,
+    trailPipelines: TrailPipelineSet,
+  ): TrailResources {
+    const targetWidth = Math.max(1, Math.floor(width * config.trailResolutionScale));
+    const targetHeight = Math.max(1, Math.floor(height * config.trailResolutionScale));
+
     if (
       this.trailResources
-      && this.trailResources.width === width
-      && this.trailResources.height === height
+      && this.trailResources.width === targetWidth
+      && this.trailResources.height === targetHeight
+      && this.trailResources.requestedMode === config.trailFormatMode
+      && this.trailResources.mode === trailPipelines.mode
+      && this.trailResources.scale === config.trailResolutionScale
     ) {
       return this.trailResources;
     }
@@ -350,17 +387,55 @@ export class ParticleEngine {
       this.webgpu.device,
       this.pipelines.layouts,
       this.resources.renderUniformBuffer,
-      width,
-      height,
+      {
+        canvasWidth: width,
+        canvasHeight: height,
+        requestedMode: config.trailFormatMode,
+        mode: trailPipelines.mode,
+        format: trailPipelines.format,
+        scale: config.trailResolutionScale,
+      },
     );
     this.trailReadIndex = 0;
     this.needsTrailClear = true;
     this.diagnostics.log("trails.targets", {
-      width,
-      height,
-      format: "rgba8unorm",
+      ...this.describeTrailTarget(this.trailResources),
+      canvasWidth: width,
+      canvasHeight: height,
     });
+
+    if (config.trailFormatMode !== trailPipelines.mode) {
+      this.diagnostics.log("trails.formatFallback", {
+        requestedMode: config.trailFormatMode,
+        selectedMode: trailPipelines.mode,
+        selectedFormat: trailPipelines.format,
+      });
+    }
+
     return this.trailResources;
+  }
+
+  private resolveTrailPipelines(requestedMode: TrailFormatMode): TrailPipelineSet {
+    const selected = this.pipelines.trailPipelines[requestedMode]
+      ?? this.pipelines.trailPipelines.compat;
+
+    if (!selected) {
+      throw new Error("The required 8-bit trail pipeline is unavailable.");
+    }
+
+    return selected;
+  }
+
+  private describeTrailTarget(resources: TrailResources): TrailTargetInfo {
+    return {
+      requestedMode: resources.requestedMode,
+      mode: resources.mode,
+      format: resources.format,
+      scale: resources.scale,
+      width: resources.width,
+      height: resources.height,
+      estimatedBytes: resources.estimatedBytes,
+    };
   }
 
   private releaseTrailResources(): void {

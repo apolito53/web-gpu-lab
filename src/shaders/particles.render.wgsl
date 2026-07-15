@@ -10,6 +10,7 @@ struct RenderParams {
   camera: vec4f,
   grid: vec4f,
   trail: vec4f,
+  trailOutput: vec4f,
 };
 
 struct VertexOutput {

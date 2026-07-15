@@ -4,6 +4,7 @@ struct RenderParams {
   camera: vec4f,
   grid: vec4f,
   trail: vec4f,
+  trailOutput: vec4f,
 };
 
 struct FullscreenOutput {
@@ -42,5 +43,8 @@ fn fadeFragmentMain(input: FullscreenOutput) -> @location(0) vec4f {
 fn compositeFragmentMain(input: FullscreenOutput) -> @location(0) vec4f {
   let trail = textureSample(trailTexture, trailSampler, input.uv);
   let opacity = clamp(renderParams.trail.x, 0.0, 1.0);
-  return vec4f(trail.rgb * opacity, 1.0);
+  let exposure = max(renderParams.trailOutput.x, 0.0);
+  let exposed = trail.rgb * exposure;
+  let mapped = select(exposed, vec3f(1.0) - exp(-exposed), renderParams.trailOutput.y > 0.5);
+  return vec4f(mapped * opacity, 1.0);
 }

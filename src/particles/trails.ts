@@ -1,24 +1,35 @@
 import type { ParticleLayouts } from "./pipelines";
-import { TRAIL_FORMAT } from "./types";
+import type {
+  TrailFormatMode,
+  TrailResolutionScale,
+  TrailTargetInfo,
+} from "./types";
 
-export interface TrailResources {
-  width: number;
-  height: number;
+export interface TrailResources extends TrailTargetInfo {
   textures: [GPUTexture, GPUTexture];
   views: [GPUTextureView, GPUTextureView];
   bindGroups: [GPUBindGroup, GPUBindGroup];
   sampler: GPUSampler;
 }
 
+export interface TrailResourceOptions {
+  canvasWidth: number;
+  canvasHeight: number;
+  requestedMode: TrailFormatMode;
+  mode: TrailFormatMode;
+  format: GPUTextureFormat;
+  scale: TrailResolutionScale;
+}
+
 export function createTrailResources(
   device: GPUDevice,
   layouts: ParticleLayouts,
   renderUniformBuffer: GPUBuffer,
-  width: number,
-  height: number,
+  options: TrailResourceOptions,
 ): TrailResources {
-  const textureWidth = Math.max(1, width);
-  const textureHeight = Math.max(1, height);
+  const textureWidth = Math.max(1, Math.floor(options.canvasWidth * options.scale));
+  const textureHeight = Math.max(1, Math.floor(options.canvasHeight * options.scale));
+  const estimatedBytes = textureWidth * textureHeight * bytesPerPixel(options.format) * 2;
   const sampler = device.createSampler({
     label: "trail sampler",
     addressModeU: "clamp-to-edge",
@@ -27,8 +38,8 @@ export function createTrailResources(
     minFilter: "linear",
   });
   const textures: [GPUTexture, GPUTexture] = [
-    createTrailTexture(device, textureWidth, textureHeight, "trail texture A"),
-    createTrailTexture(device, textureWidth, textureHeight, "trail texture B"),
+    createTrailTexture(device, textureWidth, textureHeight, options.format, "trail texture A"),
+    createTrailTexture(device, textureWidth, textureHeight, options.format, "trail texture B"),
   ];
   const views: [GPUTextureView, GPUTextureView] = [
     textures[0].createView({ label: "trail texture view A" }),
@@ -36,8 +47,13 @@ export function createTrailResources(
   ];
 
   return {
+    requestedMode: options.requestedMode,
+    mode: options.mode,
+    format: options.format,
+    scale: options.scale,
     width: textureWidth,
     height: textureHeight,
+    estimatedBytes,
     textures,
     views,
     bindGroups: [
@@ -61,14 +77,26 @@ function createTrailTexture(
   device: GPUDevice,
   width: number,
   height: number,
+  format: GPUTextureFormat,
   label: string,
 ): GPUTexture {
   return device.createTexture({
     label,
     size: { width, height },
-    format: TRAIL_FORMAT,
+    format,
     usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
   });
+}
+
+function bytesPerPixel(format: GPUTextureFormat): number {
+  switch (format) {
+    case "rgba16float":
+      return 8;
+    case "rgba8unorm":
+      return 4;
+    default:
+      throw new Error(`Unsupported trail format for memory accounting: ${format}`);
+  }
 }
 
 function createTrailBindGroup(

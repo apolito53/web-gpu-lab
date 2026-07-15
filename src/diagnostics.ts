@@ -16,6 +16,7 @@ export interface FrameDiagnosticSample extends DiagnosticPayload {
   canvasWidth: number;
   canvasHeight: number;
   paused: boolean;
+  trailTarget: DiagnosticPayload | null;
 }
 
 export class Diagnostics {
@@ -73,6 +74,7 @@ export class Diagnostics {
       canvasWidth: sample.canvasWidth,
       canvasHeight: sample.canvasHeight,
       paused: sample.paused,
+      trailTarget: sample.trailTarget,
     });
   }
 }
