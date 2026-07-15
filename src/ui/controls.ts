@@ -28,6 +28,7 @@ interface ButtonSet<T extends string> {
 
 export class Controls {
   readonly config: SimulationConfig = { ...DEFAULT_CONFIG };
+  private readonly panel: HTMLElement;
   private readonly statusValue: HTMLElement;
   private readonly fpsValue: HTMLElement;
   private readonly rafFrameValue: HTMLElement;
@@ -60,6 +61,7 @@ export class Controls {
 
     const panel = document.createElement("section");
     panel.className = "hud-panel";
+    this.panel = panel;
 
     const title = document.createElement("div");
     title.className = "hud-title";
@@ -403,6 +405,44 @@ export class Controls {
     this.statusValue.textContent = status;
   }
 
+  setBenchmarkInputLocked(locked: boolean): void {
+    this.panel.toggleAttribute("inert", locked);
+    this.panel.inert = locked;
+    this.panel.setAttribute("aria-busy", String(locked));
+  }
+
+  applyConfig(config: SimulationConfig): void {
+    Object.assign(this.config, config);
+    this.setParticleCount(config.particleCount);
+    this.setPaused(config.paused);
+    this.modeButtons.value = config.pointerMode;
+    this.debugButtons.value = config.debugMode;
+    this.trailFormatButtons.value = config.trailFormatMode;
+    this.trailScaleButtons.value = String(config.trailResolutionScale);
+    this.syncSegmentedButtons(this.modeButtons);
+    this.syncSegmentedButtons(this.debugButtons);
+    this.syncSegmentedButtons(this.trailFormatButtons);
+    this.syncSegmentedButtons(this.trailScaleButtons);
+
+    for (const row of this.panel.querySelectorAll<HTMLElement>(".slider-control")) {
+      const label = row.querySelector<HTMLElement>(".slider-name-wrap > span")?.textContent ?? "";
+      const key = SLIDER_CONFIG_KEYS[label as keyof typeof SLIDER_CONFIG_KEYS];
+      const input = row.querySelector<HTMLInputElement>('input[type="range"]');
+      const readout = row.querySelector<HTMLElement>(".slider-top > strong");
+
+      if (!key || !input || !readout) {
+        continue;
+      }
+
+      const value = config[key];
+
+      if (typeof value === "number") {
+        input.value = String(value);
+        readout.textContent = value.toFixed(Number(input.step) < 0.01 ? 3 : 2);
+      }
+    }
+  }
+
   setHdrTrailsAvailable(available: boolean): void {
     const hdrButton = this.trailFormatButtons.buttons.get("hdr");
 
@@ -566,7 +606,11 @@ export class Controls {
   }
 
   private formatCount(value: number): string {
-    return value >= 1000 ? `${Math.round(value / 1000)}k` : String(value);
+    return value >= 1_000_000
+      ? `${Number((value / 1_000_000).toFixed(1))}m`
+      : value >= 1000
+        ? `${Math.round(value / 1000)}k`
+        : String(value);
   }
 }
 
@@ -637,3 +681,20 @@ function createSlider(
 function titleCase(value: string): string {
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
+
+const SLIDER_CONFIG_KEYS = {
+  Speed: "speed",
+  Damping: "damping",
+  Strength: "strength",
+  Radius: "radius",
+  Turbulence: "turbulence",
+  Diffusion: "diffusion",
+  Depth: "depth",
+  Spin: "cameraSpin",
+  Perspective: "perspective",
+  Grid: "gridOpacity",
+  Trails: "trailOpacity",
+  Decay: "trailDecay",
+  Exposure: "trailExposure",
+  Size: "particleSize",
+} as const satisfies Record<string, keyof SimulationConfig>;

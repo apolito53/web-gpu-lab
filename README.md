@@ -38,7 +38,7 @@ Open `http://127.0.0.1:5187/`.
 - Target switches between the mobile-friendly `rgba8unorm` path and an HDR `rgba16float` path when supported.
 - Trail res scales only the history targets to `0.5x`, `0.75x`, or `1x`; current particles and the grid remain full-resolution.
 - Each slider has a hover/focus `?` tooltip with a short explanation.
-- `Bench` runs a short calibration sweep from `16k` to `1.0m` particles, then restores the prior particle count and pause state.
+- `Bench` runs the versioned Direct, Trails, and Stress scenarios from `16k` through `1.0m` particles, then restores the complete interactive state.
 - `Copy` writes the last benchmark report JSON to the clipboard.
 
 ## Diagnostics
@@ -64,9 +64,13 @@ The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLo
 
 ## Benchmarking
 
-The HUD benchmark is meant as a reusable device calibration harness for future WebGPU experiments. It records the adapter summary, selected WebGPU limits, user agent, DPR, viewport size, baseline simulation and camera settings, and per-count p50/p95 RAF plus CPU-submit timings. When timestamp profiling is active, each step also captures aggregate and per-pass GPU timing.
+The HUD benchmark is a reusable cross-device calibration harness. Scenario set v1 contains 15 steps: Direct, Trails, and Stress each run at `16k`, `66k`, `262k`, `524k`, and `1.0m` particles. Canonical trail scenarios use the full-resolution `rgba8unorm` compatibility path so desktop, integrated-GPU, and mobile reports share a common workload.
 
-Reports are saved to `localStorage` under `webgpu-particle-lab:lastBenchmark`, emitted as structured diagnostics, and can be copied from the HUD. Each step records the resolved trail format, scale, dimensions, and estimated allocation when trails are active.
+Every step starts from its scenario's versioned seed and complete configuration. The runner advances a fixed `1/60` simulation clock through 30 warmup frames and exactly 120 measured frames, with deterministic inactive, orbit-loop, or figure-eight pointer paths. RAF intervals remain real device measurements; fixed simulation time does not replace them. Interactive input is inert for the run.
+
+The benchmark uses a temporary particle engine while the interactive engine remains parked with its buffers and trail textures intact. Completion restores the complete config, pointer state, pause/lock state, particles, and trail history instead of merely reconstructing equivalent controls.
+
+Schema-v2 reports are saved to `localStorage` under `webgpu-particle-lab:lastBenchmark`, emitted as structured diagnostics, and copied from the HUD. They include scenario versions and seeds, complete resolved configs, scripted path versions, canvas backing resolution, render path, target format/scale, particle and trail allocation estimates, exact frame counts, RAF/CPU summaries, GPU timing availability, and per-pass timings when profiling is active. Disabled or unavailable GPU timing remains explicit and never substitutes RAF or CPU-submit values.
 
 ## Trail Rendering
 

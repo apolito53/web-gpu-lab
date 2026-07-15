@@ -27,6 +27,13 @@ import {
   type TrailPipelineSet,
 } from "./pipelines";
 
+export interface FrameExecutionOptions {
+  simulationNowMs?: number;
+  simulationDeltaSeconds?: number;
+  profileGpu?: boolean;
+  gpuProfileTag?: string;
+}
+
 export class ParticleEngine {
   private readonly simUniforms = new Float32Array(SIM_UNIFORM_FLOATS);
   private readonly renderUniforms = new Float32Array(RENDER_UNIFORM_FLOATS);
@@ -86,8 +93,12 @@ export class ParticleEngine {
     return this.gpuProfiler?.getDroppedFrameCount() ?? 0;
   }
 
-  reset(config: SimulationConfig): void {
-    this.seed = (this.seed + 0x9e3779b9) >>> 0;
+  getPendingGpuTimingFrames(): number {
+    return this.gpuProfiler?.getPendingFrameCount() ?? 0;
+  }
+
+  reset(config: SimulationConfig, seed?: number): void {
+    this.seed = seed === undefined ? (this.seed + 0x9e3779b9) >>> 0 : seed >>> 0;
     this.replaceResources(config.particleCount);
     this.needsTrailClear = true;
     this.diagnostics.log("simulation.reset", {
@@ -96,7 +107,13 @@ export class ParticleEngine {
     });
   }
 
-  frame(now: number, deltaSeconds: number, config: SimulationConfig, pointer: PointerState): FrameStats {
+  frame(
+    now: number,
+    deltaSeconds: number,
+    config: SimulationConfig,
+    pointer: PointerState,
+    options: FrameExecutionOptions = {},
+  ): FrameStats {
     if (config.particleCount !== this.resources.particleCount) {
       this.replaceResources(config.particleCount);
       this.diagnostics.log("particles.countChanged", {
@@ -116,7 +133,9 @@ export class ParticleEngine {
 
     const cpuSubmitStart = performance.now();
     const rafFrameMs = deltaSeconds * 1000;
-    const dt = config.paused ? 0 : Math.min(deltaSeconds, 1 / 30);
+    const simulationNowMs = options.simulationNowMs ?? now;
+    const simulationDeltaSeconds = options.simulationDeltaSeconds ?? deltaSeconds;
+    const dt = config.paused ? 0 : Math.min(simulationDeltaSeconds, 1 / 30);
     const dispatchSize = Math.ceil(config.particleCount / WORKGROUP_SIZE);
     const renderIndex = config.paused ? this.activeReadIndex : this.flipIndex(this.activeReadIndex);
     const trailsEnabled = config.trailOpacity > 0.001;
@@ -129,14 +148,17 @@ export class ParticleEngine {
       this.releaseTrailResources();
     }
 
-    const gpuFrame = this.gpuProfiler?.beginFrame({
-      particleCount: config.particleCount,
-      renderPath: trailResources ? "trails" : "direct",
-    }) ?? null;
+    const gpuFrame = options.profileGpu === false
+      ? null
+      : this.gpuProfiler?.beginFrame({
+          particleCount: config.particleCount,
+          renderPath: trailResources ? "trails" : "direct",
+          benchmarkStepId: options.gpuProfileTag,
+        }) ?? null;
 
-    this.writeSimulationUniforms(now, dt, config, pointer);
+    this.writeSimulationUniforms(simulationNowMs, dt, config, pointer);
     this.writeRenderUniforms(
-      now,
+      simulationNowMs,
       canvasSize.width,
       canvasSize.height,
       canvasSize.dpr,

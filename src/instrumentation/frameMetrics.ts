@@ -37,6 +37,11 @@ export class RollingFrameMetrics {
 
     return summarizeFrameSamples(this.samples);
   }
+
+  reset(): FrameMetricSummary {
+    this.samples.length = 0;
+    return summarizeFrameSamples(this.samples);
+  }
 }
 
 export function summarizeFrameSamples(samples: readonly FrameSample[]): FrameMetricSummary {

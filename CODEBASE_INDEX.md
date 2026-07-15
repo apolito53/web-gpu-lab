@@ -17,12 +17,12 @@ Purpose: a compact routing map for the raw WebGPU 3D particle wind tunnel. Keep 
 - `src/gpu/resize.ts`: DPR-clamped canvas backing size and context reconfiguration.
 - `src/instrumentation/frameMetrics.ts`: rolling RAF/CPU-submit summaries, p95 timing, and 60 Hz budget miss ratios.
 - `src/instrumentation/gpuTimestampProfiler.ts`: optional timestamp-query pass instrumentation, three-slot asynchronous readback, dropped-sample accounting, and rolling GPU summaries.
-- `src/instrumentation/benchmark.ts`: benchmark sweep counts, warm-up/sample windows, stable-tier scoring, and report shaping.
+- `src/instrumentation/benchmark.ts`: versioned Direct/Trails/Stress scenarios, deterministic frame plans and pointer paths, frame-count windows, stable-tier scoring, resource estimates, and schema-v2 report shaping.
 - `src/particles/buffers.ts`: CPU seeding into a 3D volume, ping-pong storage buffers, uniform buffers, and particle bind groups.
 - `src/particles/trails.ts`: scaled 8-bit/HDR trail textures, sampler, texture bind groups, and allocation estimates.
 - `src/particles/pipelines.ts`: explicit bind group layouts plus compute, particle, optional HDR trail, fade/composite, and generated grid pipeline creation.
-- `src/particles/frame.ts`: per-frame 3D simulation/camera/grid/trail uniform writes, compute dispatch, direct or offscreen trail render flow, crisp live-particle composite, grid draw, and buffer swapping.
-- `src/main.ts`: owns RAF cadence timing; `src/particles/frame.ts` owns CPU command-submit timing.
+- `src/particles/frame.ts`: per-frame 3D simulation/camera/grid/trail uniform writes, optional fixed simulation timing and GPU sample tags, compute dispatch, direct or offscreen trail render flow, crisp live-particle composite, grid draw, and buffer swapping.
+- `src/main.ts`: owns real RAF cadence, temporary benchmark-engine swapping, complete interactive-state parking/restoration, UI/input locking, and report persistence; `src/particles/frame.ts` owns CPU command-submit timing.
 - `src/particles/types.ts`: shared config, pointer, stats, and constants.
 - `src/ui/controls.ts`: HUD, buttons, sliders, slider help tooltips, segmented modes, and status/stats updates.
 - `src/shaders/particles.compute.wgsl`: 3D velocity integration, spherical pointer force, orbit swirl, turbulence, diffusion, damping, and wrapping.
@@ -61,3 +61,6 @@ npm.cmd run smoke
 - HUD `FPS` is RAF cadence, while `CPU submit` is command encoding/submission time. Do not use CPU submit as display FPS or GPU time.
 - Timestamp-query profiling is deliberately opt-in through the HUD or `?gpuProfiler=on`. Keep it off for canonical RAF baselines, and treat its summed pass durations separately from end-to-end frame cadence.
 - The profiler never waits inside RAF. It uses three readback slots and counts an unmeasured frame as dropped when all slots are occupied.
+- Benchmarks measure 15 scenario/count steps with 30 warmup and 120 sample frames each. They can finish faster on high-refresh displays, but every device receives the same simulation-step count and fixed `1/60` physics clock.
+- GPU readbacks are tagged by benchmark step. After each sample window, profiling stops briefly while pending slots drain, preventing late timestamps from contaminating the next scenario.
+- The interactive engine stays allocated during a benchmark so its exact GPU state can be restored. Account for both engines when reasoning about peak benchmark memory.

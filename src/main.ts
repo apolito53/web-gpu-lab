@@ -1,8 +1,8 @@
 import { Diagnostics, type DiagnosticPayload } from "./diagnostics";
 import { initializeWebGpu, WebGpuUnavailableError, type WebGpuContext } from "./gpu/webgpu";
 import {
-  BENCHMARK_PARTICLE_COUNTS,
   BenchmarkRunner,
+  type BenchmarkFramePlan,
   type BenchmarkProgress,
   type BenchmarkReport,
   type DeviceProfile,
@@ -11,6 +11,7 @@ import { RollingFrameMetrics } from "./instrumentation/frameMetrics";
 import {
   RollingGpuTimingMetrics,
   summarizeGpuTimings,
+  type GpuFrameTimingSample,
   type GpuTimingAvailability,
   type GpuTimingSummary,
 } from "./instrumentation/gpuTimestampProfiler";
@@ -29,16 +30,25 @@ const fallbackRoot = requireElement<HTMLElement>("fallback-root");
 const pointer: PointerState = { x: 0, y: 0, active: false, locked: false };
 let latestConfig: SimulationConfig;
 let engine: ParticleEngine | null = null;
+let webgpuContext: WebGpuContext | null = null;
 let animationFrame = 0;
 let lastFrameTime: number | null = null;
 let deviceProfile: DeviceProfile | null = null;
 let benchmarkRunner: BenchmarkRunner | null = null;
+let benchmarkStarting = false;
 let latestBenchmarkReport: BenchmarkReport | null = null;
-let benchmarkRestoreState: Pick<SimulationConfig, "particleCount" | "paused"> | null = null;
+let gpuProfilingEnabled = false;
+
+interface BenchmarkRestoreState {
+  engine: ParticleEngine;
+  config: SimulationConfig;
+  pointer: PointerState;
+}
+
+let benchmarkRestoreState: BenchmarkRestoreState | null = null;
 const frameMetrics = new RollingFrameMetrics();
 const gpuTimingMetrics = new RollingGpuTimingMetrics();
 let lastGpuDiagnosticAt = 0;
-let gpuProfilerAvailability: GpuTimingAvailability = "unavailable";
 
 const DEVICE_LIMIT_KEYS = [
   "maxTextureDimension2D",
@@ -55,6 +65,11 @@ const DEVICE_LIMIT_KEYS = [
 
 const controls = new Controls(hudRoot, {
   onConfigChanged: (config, key) => {
+    if (benchmarkRunner || benchmarkStarting) {
+      controls.applyConfig(latestConfig);
+      return;
+    }
+
     latestConfig = config;
     diagnostics.log(key === "debugMode" ? "debug.mode" : "control.changed", {
       key,
@@ -62,18 +77,24 @@ const controls = new Controls(hudRoot, {
     });
   },
   onReset: () => {
-    if (engine) {
+    if (engine && !benchmarkRunner && !benchmarkStarting) {
       engine.reset(latestConfig);
     }
   },
   onPointerLockChanged: (locked) => {
+    if (benchmarkRunner || benchmarkStarting) {
+      return;
+    }
+
     pointer.locked = locked;
     pointer.active = locked || pointer.active;
     controls.updatePointer(pointer.active, pointer.locked);
     diagnostics.log("control.changed", { key: "pointerLock", value: locked });
   },
   onGpuProfilerToggle: () => toggleGpuProfiler(),
-  onBenchmarkStart: () => startBenchmark(),
+  onBenchmarkStart: () => {
+    void startBenchmark();
+  },
   onBenchmarkCopy: () => {
     void copyBenchmarkReport();
   },
@@ -86,9 +107,10 @@ void boot();
 async function boot(): Promise<void> {
   try {
     controls.updateStatus("Requesting GPU");
-    const gpuProfilingEnabled =
+    gpuProfilingEnabled =
       new URLSearchParams(window.location.search).get("gpuProfiler") === "on";
     const webgpu = await initializeWebGpu(canvas, diagnostics, gpuProfilingEnabled);
+    webgpuContext = webgpu;
     deviceProfile = createDeviceProfile(webgpu);
     controls.updateStatus(webgpu.adapterSummary);
     controls.setGpuProfilerMode(gpuProfilingEnabled, webgpu.timestampQuerySupported);
@@ -105,11 +127,6 @@ async function boot(): Promise<void> {
       latestConfig,
       gpuProfilingEnabled,
     );
-    gpuProfilerAvailability = engine.gpuTimingSupported
-      ? "available"
-      : webgpu.timestampQuerySupported && !gpuProfilingEnabled
-        ? "disabled"
-        : "unavailable";
     const hdrTrailsAvailable = engine.supportsTrailFormat("hdr");
     controls.setHdrTrailsAvailable(hdrTrailsAvailable);
     diagnostics.log("trails.capabilities", {
@@ -136,24 +153,46 @@ async function boot(): Promise<void> {
 }
 
 function runFrame(now: number): void {
-  if (!engine) {
+  const activeEngine = engine;
+
+  if (!activeEngine) {
     return;
   }
 
   const deltaSeconds = lastFrameTime === null ? 1 / 60 : (now - lastFrameTime) / 1000;
   lastFrameTime = now;
-  const stats = engine.frame(now, deltaSeconds, latestConfig, pointer);
-  const gpuTimingSummary = engine.gpuTimingSupported
+  const benchmarkFrame = benchmarkRunner?.currentFramePlan ?? null;
+
+  if (benchmarkFrame?.resetSeed !== null && benchmarkFrame?.resetSeed !== undefined) {
+    activeEngine.reset(benchmarkFrame.config, benchmarkFrame.resetSeed);
+  }
+
+  const stats = activeEngine.frame(
+    now,
+    deltaSeconds,
+    benchmarkFrame?.config ?? latestConfig,
+    benchmarkFrame?.pointer ?? pointer,
+    benchmarkFrame
+      ? {
+          simulationNowMs: benchmarkFrame.simulationNowMs,
+          simulationDeltaSeconds: benchmarkFrame.simulationDeltaSeconds,
+          profileGpu: benchmarkFrame.profileGpu,
+          gpuProfileTag: benchmarkFrame.stepId,
+        }
+      : undefined,
+  );
+  const gpuSamples = activeEngine.drainGpuTimingSamples();
+  const gpuTimingSummary = activeEngine.gpuTimingSupported
     ? gpuTimingMetrics.record(
-        engine.drainGpuTimingSamples(),
-        engine.getDroppedGpuTimingFrames(),
+        gpuSamples,
+        activeEngine.getDroppedGpuTimingFrames(),
       )
-    : summarizeGpuTimings([], false, 0, gpuProfilerAvailability);
+    : summarizeGpuTimings([], false, 0, gpuTimingAvailabilityForEngine(activeEngine));
   const metricSummary = frameMetrics.record(stats);
   controls.updateStats(stats);
   controls.updatePerformance(metricSummary);
   controls.updateGpuPerformance(gpuTimingSummary);
-  updateBenchmark(now, stats, gpuTimingSummary);
+  updateBenchmark(stats, gpuSamples, activeEngine.getPendingGpuTimingFrames());
   diagnostics.logFrameSample(now, {
     fps: stats.fps,
     rafFrameMs: stats.rafFrameMs,
@@ -164,6 +203,8 @@ function runFrame(now: number): void {
     canvasHeight: stats.canvasHeight,
     paused: stats.paused,
     trailTarget: toDiagnosticTrailTarget(stats.trailTarget),
+    benchmarkStepId: benchmarkFrame?.stepId ?? null,
+    benchmarkPhase: benchmarkFrame?.phase ?? null,
   });
 
   if (gpuTimingSummary.sampleCount > 0 && now - lastGpuDiagnosticAt >= 5000) {
@@ -173,79 +214,118 @@ function runFrame(now: number): void {
   animationFrame = requestAnimationFrame(runFrame);
 }
 
-function startBenchmark(): void {
-  if (!engine || !deviceProfile) {
+async function startBenchmark(): Promise<void> {
+  if (!engine || !deviceProfile || !webgpuContext) {
     controls.updateBenchmarkCopyStatus("not ready", latestBenchmarkReport);
     return;
   }
 
-  if (benchmarkRunner) {
+  if (benchmarkRunner || benchmarkStarting) {
     return;
   }
 
-  benchmarkRestoreState = {
-    particleCount: latestConfig.particleCount,
-    paused: latestConfig.paused,
+  benchmarkStarting = true;
+  controls.setBenchmarkInputLocked(true);
+  const restoreState: BenchmarkRestoreState = {
+    engine,
+    config: { ...latestConfig },
+    pointer: { ...pointer },
   };
-  benchmarkRunner = new BenchmarkRunner(deviceProfile, latestConfig, performance.now());
-  gpuTimingMetrics.reset();
-  latestConfig = {
-    ...latestConfig,
-    particleCount: benchmarkRunner.currentParticleCount,
-    paused: false,
-  };
-  controls.setParticleCount(benchmarkRunner.currentParticleCount);
-  controls.setPaused(false);
-  controls.updateBenchmark({
-    running: true,
-    label: `${formatCount(benchmarkRunner.currentParticleCount)} warmup`,
-    stepIndex: 0,
-    stepCount: BENCHMARK_PARTICLE_COUNTS.length,
-    particleCount: benchmarkRunner.currentParticleCount,
-    phase: "warmup",
-    phaseProgress: 0,
-  });
-  diagnostics.log("benchmark.started", {
-    particleCounts: [...BENCHMARK_PARTICLE_COUNTS],
-    baselineParticleCount: benchmarkRestoreState.particleCount,
-    restoredPausedState: benchmarkRestoreState.paused,
-    adapter: deviceProfile.adapter,
-  });
+  let benchmarkEngine: ParticleEngine | null = null;
+
+  try {
+    const initialRunner = new BenchmarkRunner(
+      deviceProfile,
+      gpuTimingAvailabilityForEngine(restoreState.engine),
+    );
+    const initialFrame = initialRunner.currentFramePlan;
+    benchmarkEngine = await ParticleEngine.create(
+      canvas,
+      webgpuContext,
+      diagnostics,
+      initialFrame.config,
+      gpuProfilingEnabled,
+    );
+    const benchmarkGpuTimingAvailability = gpuTimingAvailabilityForEngine(benchmarkEngine);
+    const runner = new BenchmarkRunner(deviceProfile, benchmarkGpuTimingAvailability);
+    const firstFrame = runner.currentFramePlan;
+    benchmarkRestoreState = restoreState;
+    benchmarkRunner = runner;
+    engine = benchmarkEngine;
+    lastFrameTime = null;
+    frameMetrics.reset();
+    gpuTimingMetrics.reset();
+    controls.updateBenchmark(progressForFramePlan(firstFrame));
+    diagnostics.log("benchmark.started", {
+      schemaVersion: 2,
+      scenarioSetVersion: 1,
+      stepCount: firstFrame.stepCount,
+      baselineParticleCount: restoreState.config.particleCount,
+      restoredPausedState: restoreState.config.paused,
+      adapter: deviceProfile.adapter,
+      gpuTimingAvailability: benchmarkGpuTimingAvailability,
+    });
+  } catch (error) {
+    if (engine === benchmarkEngine) {
+      engine = restoreState.engine;
+    }
+
+    benchmarkRunner = null;
+    benchmarkRestoreState = null;
+    latestConfig = { ...restoreState.config };
+    Object.assign(pointer, restoreState.pointer);
+    benchmarkEngine?.destroy();
+    lastFrameTime = null;
+    frameMetrics.reset();
+    gpuTimingMetrics.reset();
+    controls.applyConfig(latestConfig);
+    controls.updatePointer(pointer.active, pointer.locked);
+    controls.setBenchmarkInputLocked(false);
+    controls.updateBenchmarkCopyStatus("start failed", latestBenchmarkReport);
+    diagnostics.log("benchmark.startFailed", {
+      message: error instanceof Error ? error.message : String(error),
+    });
+  } finally {
+    benchmarkStarting = false;
+  }
 }
 
 function updateBenchmark(
-  now: number,
   stats: ReturnType<ParticleEngine["frame"]>,
-  gpuTimingSummary: GpuTimingSummary,
+  gpuSamples: readonly GpuFrameTimingSample[],
+  pendingGpuFrames: number,
 ): void {
   if (!benchmarkRunner) {
     return;
   }
 
-  const progress = benchmarkRunner.record(now, stats, gpuTimingSummary);
+  const progress = benchmarkRunner.record(stats, gpuSamples, pendingGpuFrames);
 
   if (progress.stepResult) {
     diagnostics.log("benchmark.step", {
+      stepId: progress.stepResult.stepId,
+      scenarioId: progress.stepResult.scenarioId,
+      scenarioVersion: progress.stepResult.scenarioVersion,
+      seed: progress.stepResult.seed,
       particleCount: progress.stepResult.particleCount,
+      sampleCount: progress.stepResult.sampleCount,
       p50FrameMs: progress.stepResult.p50FrameMs,
       p95FrameMs: progress.stepResult.p95FrameMs,
       averageFps: progress.stepResult.averageFps,
       p95CpuSubmitMs: progress.stepResult.p95CpuSubmitMs,
       stable60Hz: progress.stepResult.stable60Hz,
+      renderPath: progress.stepResult.renderPath,
+      canvasWidth: progress.stepResult.canvasWidth,
+      canvasHeight: progress.stepResult.canvasHeight,
+      resources: { ...progress.stepResult.resources },
       trailTarget: toDiagnosticTrailTarget(progress.stepResult.trailTarget),
-      gpuTiming: progress.stepResult.gpuTiming
-        ? toDiagnosticGpuSummary(progress.stepResult.gpuTiming)
-        : null,
+      gpuTiming: toDiagnosticGpuSummary(progress.stepResult.gpuTiming),
     });
+    frameMetrics.reset();
     gpuTimingMetrics.reset();
   }
 
   if (progress.running) {
-    latestConfig = {
-      ...latestConfig,
-      particleCount: progress.particleCount,
-    };
-    controls.setParticleCount(progress.particleCount);
     controls.updateBenchmark(progress);
     return;
   }
@@ -254,21 +334,30 @@ function updateBenchmark(
 }
 
 function finishBenchmark(progress: BenchmarkProgress): void {
+  const completedBenchmarkEngine = engine;
+  const restoreState = benchmarkRestoreState;
   benchmarkRunner = null;
   latestBenchmarkReport = progress.report ?? null;
 
-  if (benchmarkRestoreState) {
-    latestConfig = {
-      ...latestConfig,
-      particleCount: benchmarkRestoreState.particleCount,
-      paused: benchmarkRestoreState.paused,
-    };
-    controls.setParticleCount(benchmarkRestoreState.particleCount);
-    controls.setPaused(benchmarkRestoreState.paused);
-    benchmarkRestoreState = null;
+  if (restoreState) {
+    engine = restoreState.engine;
+    latestConfig = { ...restoreState.config };
+    Object.assign(pointer, restoreState.pointer);
+    controls.applyConfig(latestConfig);
+    controls.updatePointer(pointer.active, pointer.locked);
+    completedBenchmarkEngine?.destroy();
+    engine.drainGpuTimingSamples();
+  } else {
+    completedBenchmarkEngine?.destroy();
+    engine = null;
   }
 
+  benchmarkRestoreState = null;
+  lastFrameTime = null;
+  frameMetrics.reset();
+  gpuTimingMetrics.reset();
   controls.updateBenchmark(progress);
+  controls.setBenchmarkInputLocked(false);
 
   if (latestBenchmarkReport) {
     persistBenchmarkReport(latestBenchmarkReport);
@@ -277,13 +366,23 @@ function finishBenchmark(progress: BenchmarkProgress): void {
       maxStableParticleCount: latestBenchmarkReport.maxStableParticleCount,
       recommendedParticleCount: latestBenchmarkReport.recommendedParticleCount,
       steps: latestBenchmarkReport.steps.map((step) => ({
+        stepId: step.stepId,
+        scenarioId: step.scenarioId,
         particleCount: step.particleCount,
         p95FrameMs: step.p95FrameMs,
         p95CpuSubmitMs: step.p95CpuSubmitMs,
         stable60Hz: step.stable60Hz,
+        renderPath: step.renderPath,
+        resources: { ...step.resources },
         trailTarget: toDiagnosticTrailTarget(step.trailTarget),
-        gpuTiming: step.gpuTiming ? toDiagnosticGpuSummary(step.gpuTiming) : null,
+        gpuTiming: toDiagnosticGpuSummary(step.gpuTiming),
       })),
+    });
+    diagnostics.log("benchmark.restored", {
+      particleCount: latestConfig.particleCount,
+      paused: latestConfig.paused,
+      pointerActive: pointer.active,
+      pointerLocked: pointer.locked,
     });
   }
 }
@@ -317,6 +416,32 @@ function persistBenchmarkReport(report: BenchmarkReport): void {
       message: error instanceof Error ? error.message : String(error),
     });
   }
+}
+
+function progressForFramePlan(plan: BenchmarkFramePlan): BenchmarkProgress {
+  return {
+    running: true,
+    label: `${plan.scenarioLabel} ${formatCount(plan.config.particleCount)} ${plan.phase}`,
+    stepIndex: plan.stepIndex,
+    stepCount: plan.stepCount,
+    particleCount: plan.config.particleCount,
+    scenarioId: plan.scenarioId,
+    scenarioLabel: plan.scenarioLabel,
+    phase: plan.phase,
+    phaseProgress: plan.phaseProgress,
+  };
+}
+
+function gpuTimingAvailabilityForEngine(target: ParticleEngine): GpuTimingAvailability {
+  if (target.gpuTimingSupported) {
+    return "available";
+  }
+
+  if (!gpuProfilingEnabled && webgpuContext?.timestampQuerySupported) {
+    return "disabled";
+  }
+
+  return "unavailable";
 }
 
 function createDeviceProfile(webgpu: WebGpuContext): DeviceProfile {
@@ -395,12 +520,20 @@ function toggleGpuProfiler(): void {
 
 function installPointerInput(): void {
   canvas.addEventListener("pointermove", (event) => {
+    if (benchmarkRunner || benchmarkStarting) {
+      return;
+    }
+
     updatePointerPosition(event);
     pointer.active = true;
     controls.updatePointer(pointer.active, pointer.locked);
   });
 
   canvas.addEventListener("pointerdown", (event) => {
+    if (benchmarkRunner || benchmarkStarting) {
+      return;
+    }
+
     canvas.setPointerCapture(event.pointerId);
     updatePointerPosition(event);
     pointer.active = true;
@@ -408,6 +541,10 @@ function installPointerInput(): void {
   });
 
   canvas.addEventListener("pointerup", (event) => {
+    if (benchmarkRunner || benchmarkStarting) {
+      return;
+    }
+
     if (canvas.hasPointerCapture(event.pointerId)) {
       canvas.releasePointerCapture(event.pointerId);
     }
@@ -417,6 +554,10 @@ function installPointerInput(): void {
   });
 
   canvas.addEventListener("pointerleave", () => {
+    if (benchmarkRunner || benchmarkStarting) {
+      return;
+    }
+
     pointer.active = pointer.locked;
     controls.updatePointer(pointer.active, pointer.locked);
   });
@@ -459,4 +600,8 @@ function requireElement<T extends HTMLElement>(id: string): T {
 window.addEventListener("beforeunload", () => {
   cancelAnimationFrame(animationFrame);
   engine?.destroy();
+
+  if (benchmarkRestoreState?.engine !== engine) {
+    benchmarkRestoreState?.engine.destroy();
+  }
 });

@@ -15,6 +15,7 @@ export type GpuTimingAvailability = "available" | "disabled" | "unavailable";
 export interface GpuFrameContext {
   particleCount: number;
   renderPath: GpuRenderPath;
+  benchmarkStepId?: string;
 }
 
 export interface GpuFrameTimingSample extends GpuFrameContext {
@@ -166,6 +167,10 @@ export class GpuTimestampProfiler {
 
   getDroppedFrameCount(): number {
     return this.droppedFrames;
+  }
+
+  getPendingFrameCount(): number {
+    return this.slots.filter((slot) => slot.state !== "idle").length;
   }
 
   destroy(): void {
