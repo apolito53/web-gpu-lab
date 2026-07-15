@@ -86,6 +86,14 @@ The fullscreen passes preserve framebuffer orientation, so ping-pong history doe
 
 Two ping-pong targets are allocated. Estimated trail memory is therefore `width * height * bytesPerPixel * 2`, before implementation-specific overhead: 4 bytes per pixel for 8-bit targets and 8 bytes per pixel for HDR targets.
 
+## Rendering Ownership
+
+`ParticleEngine` remains the frame orchestrator. It selects direct or trail rendering, writes simulation and render uniforms, asks for the current target state, submits the command buffer, and advances particle state.
+
+`src/particles/framePasses.ts` contains explicit command-recording functions for compute, direct rendering, trail fade, trail particle injection, composite, and grid draws. Pass order and timestamp labels stay visible without a generalized render graph.
+
+`src/particles/renderTargets.ts` owns trail texture allocation, views, samplers, texture bind groups, resize/format/scale recreation, ping-pong indices, clear state, destruction, and memory metadata. `src/instrumentation/gpuTimestampProfiler.ts` independently owns optional queries and asynchronous readback.
+
 ## Validate
 
 ```powershell

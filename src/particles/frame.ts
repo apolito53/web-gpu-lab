@@ -3,22 +3,23 @@ import { configureCanvasSize } from "../gpu/resize";
 import type { WebGpuContext } from "../gpu/webgpu";
 import {
   GpuTimestampProfiler,
-  type GpuFrameProfile,
   type GpuFrameTimingSample,
 } from "../instrumentation/gpuTimestampProfiler";
 import { createParticleResources, destroyParticleResources, type ParticleResources } from "./buffers";
-import { createTrailResources, destroyTrailResources, type TrailResources } from "./trails";
+import {
+  recordComputePass,
+  recordDirectFramePass,
+  recordTrailFramePasses,
+} from "./framePasses";
 import {
   debugModeIndex,
   type FrameStats,
-  GRID_VERTEX_COUNT,
   type PointerState,
   pointerModeIndex,
   RENDER_UNIFORM_FLOATS,
   type SimulationConfig,
   SIM_UNIFORM_FLOATS,
   type TrailFormatMode,
-  type TrailTargetInfo,
   WORKGROUP_SIZE,
 } from "./types";
 import {
@@ -26,6 +27,7 @@ import {
   type ParticlePipelineBundle,
   type TrailPipelineSet,
 } from "./pipelines";
+import { RenderTargets } from "./renderTargets";
 
 export interface FrameExecutionOptions {
   simulationNowMs?: number;
@@ -38,11 +40,9 @@ export class ParticleEngine {
   private readonly simUniforms = new Float32Array(SIM_UNIFORM_FLOATS);
   private readonly renderUniforms = new Float32Array(RENDER_UNIFORM_FLOATS);
   private readonly rafFrameTimes: number[] = [];
+  private readonly renderTargets: RenderTargets;
   private resources: ParticleResources;
-  private trailResources: TrailResources | null = null;
   private activeReadIndex: 0 | 1 = 0;
-  private trailReadIndex: 0 | 1 = 0;
-  private needsTrailClear = true;
   private seed = 0x51a7f13;
 
   private constructor(
@@ -59,6 +59,7 @@ export class ParticleEngine {
       initialConfig.particleCount,
       this.seed,
     );
+    this.renderTargets = new RenderTargets(webgpu.device, pipelines.layouts, diagnostics);
   }
 
   static async create(
@@ -100,7 +101,7 @@ export class ParticleEngine {
   reset(config: SimulationConfig, seed?: number): void {
     this.seed = seed === undefined ? (this.seed + 0x9e3779b9) >>> 0 : seed >>> 0;
     this.replaceResources(config.particleCount);
-    this.needsTrailClear = true;
+    this.renderTargets.markTrailsForClear();
     this.diagnostics.log("simulation.reset", {
       particleCount: config.particleCount,
       seed: this.seed,
@@ -141,12 +142,22 @@ export class ParticleEngine {
     const trailsEnabled = config.trailOpacity > 0.001;
     const trailPipelines = this.resolveTrailPipelines(config.trailFormatMode);
     const trailResources = trailsEnabled
-      ? this.ensureTrailResources(canvasSize.width, canvasSize.height, config, trailPipelines)
+      ? this.renderTargets.ensureTrails(
+          canvasSize.width,
+          canvasSize.height,
+          config,
+          trailPipelines,
+          this.resources.renderUniformBuffer,
+        )
       : null;
 
     if (!trailsEnabled) {
-      this.releaseTrailResources();
+      this.renderTargets.releaseTrails();
     }
+
+    const trailFrameTargets = trailResources
+      ? this.renderTargets.prepareTrailFrame(config.paused)
+      : null;
 
     const gpuFrame = options.profileGpu === false
       ? null
@@ -163,7 +174,7 @@ export class ParticleEngine {
       canvasSize.height,
       canvasSize.dpr,
       dt,
-      trailResources !== null && this.needsTrailClear,
+      trailFrameTargets?.clearRequired ?? false,
       trailResources?.mode ?? "compat",
       config,
     );
@@ -173,35 +184,48 @@ export class ParticleEngine {
     });
 
     if (!config.paused) {
-      const computePass = commandEncoder.beginComputePass({
-        label: "particle compute pass",
-        timestampWrites: gpuFrame?.timestampWrites("compute"),
-      });
-      computePass.setPipeline(this.pipelines.computePipeline);
-      computePass.setBindGroup(0, this.resources.computeBindGroups[this.activeReadIndex]);
-      computePass.dispatchWorkgroups(dispatchSize);
-      computePass.end();
+      recordComputePass(
+        commandEncoder,
+        this.pipelines.computePipeline,
+        this.resources,
+        this.activeReadIndex,
+        dispatchSize,
+        gpuFrame,
+      );
     }
 
     const textureView = this.webgpu.canvasContext.getCurrentTexture().createView();
 
-    if (trailResources) {
-      this.renderTrailFrame(
+    if (trailFrameTargets) {
+      recordTrailFramePasses(
         commandEncoder,
         textureView,
-        trailResources,
+        this.pipelines,
         trailPipelines,
+        this.resources,
+        trailFrameTargets,
         gpuFrame,
         renderIndex,
         config,
       );
     } else {
-      this.renderDirectFrame(commandEncoder, textureView, gpuFrame, renderIndex, config);
+      recordDirectFramePass(
+        commandEncoder,
+        textureView,
+        this.pipelines,
+        this.resources,
+        gpuFrame,
+        renderIndex,
+        config,
+      );
     }
 
     gpuFrame?.resolve(commandEncoder);
     this.webgpu.device.queue.submit([commandEncoder.finish()]);
     gpuFrame?.afterSubmit();
+    if (trailFrameTargets) {
+      this.renderTargets.commitTrailFrame(trailFrameTargets);
+    }
 
     if (!config.paused) {
       this.activeReadIndex = renderIndex;
@@ -221,19 +245,19 @@ export class ParticleEngine {
       pointerMode: config.pointerMode,
       debugMode: config.debugMode,
       paused: config.paused,
-      trailTarget: trailResources ? this.describeTrailTarget(trailResources) : null,
+      trailTarget: trailResources ? this.renderTargets.describe(trailResources) : null,
     };
   }
 
   destroy(): void {
     destroyParticleResources(this.resources);
-    destroyTrailResources(this.trailResources);
+    this.renderTargets.destroy();
     this.gpuProfiler?.destroy();
   }
 
   private replaceResources(particleCount: number): void {
     destroyParticleResources(this.resources);
-    this.releaseTrailResources();
+    this.renderTargets.releaseTrails();
     this.resources = createParticleResources(
       this.webgpu.device,
       this.pipelines.layouts,
@@ -241,7 +265,6 @@ export class ParticleEngine {
       this.seed,
     );
     this.activeReadIndex = 0;
-    this.needsTrailClear = true;
   }
 
   private writeSimulationUniforms(
@@ -312,173 +335,6 @@ export class ParticleEngine {
     this.webgpu.device.queue.writeBuffer(this.resources.renderUniformBuffer, 0, this.renderUniforms);
   }
 
-  private renderDirectFrame(
-    commandEncoder: GPUCommandEncoder,
-    textureView: GPUTextureView,
-    gpuFrame: GpuFrameProfile | null,
-    renderIndex: 0 | 1,
-    config: SimulationConfig,
-  ): void {
-    const renderPass = commandEncoder.beginRenderPass({
-      label: "particle direct render pass",
-      timestampWrites: gpuFrame?.timestampWrites("directRender"),
-      colorAttachments: [
-        {
-          view: textureView,
-          clearValue: { r: 0.01, g: 0.012, b: 0.018, a: 1 },
-          loadOp: "clear",
-          storeOp: "store",
-        },
-      ],
-    });
-
-    renderPass.setBindGroup(0, this.resources.renderBindGroups[renderIndex]);
-    renderPass.setPipeline(this.pipelines.renderPipeline);
-    renderPass.draw(6, config.particleCount);
-    this.drawGrid(renderPass, config);
-    renderPass.end();
-  }
-
-  private renderTrailFrame(
-    commandEncoder: GPUCommandEncoder,
-    textureView: GPUTextureView,
-    trailResources: TrailResources,
-    trailPipelines: TrailPipelineSet,
-    gpuFrame: GpuFrameProfile | null,
-    renderIndex: 0 | 1,
-    config: SimulationConfig,
-  ): void {
-    let compositeTrailIndex = this.trailReadIndex;
-    const shouldUpdateTrail = !config.paused || this.needsTrailClear;
-
-    if (shouldUpdateTrail) {
-      const writeIndex = this.flipIndex(this.trailReadIndex);
-
-      const fadePass = commandEncoder.beginRenderPass({
-        label: "trail fade pass",
-        timestampWrites: gpuFrame?.timestampWrites("trailFade"),
-        colorAttachments: [
-          {
-            view: trailResources.views[writeIndex],
-            clearValue: { r: 0, g: 0, b: 0, a: 1 },
-            loadOp: "clear",
-            storeOp: "store",
-          },
-        ],
-      });
-      fadePass.setPipeline(trailPipelines.fadePipeline);
-      fadePass.setBindGroup(0, trailResources.bindGroups[this.trailReadIndex]);
-      fadePass.draw(3);
-      fadePass.end();
-
-      const particleTrailPass = commandEncoder.beginRenderPass({
-        label: "particle trail render pass",
-        timestampWrites: gpuFrame?.timestampWrites("trailParticles"),
-        colorAttachments: [
-          {
-            view: trailResources.views[writeIndex],
-            loadOp: "load",
-            storeOp: "store",
-          },
-        ],
-      });
-      particleTrailPass.setBindGroup(0, this.resources.renderBindGroups[renderIndex]);
-      particleTrailPass.setPipeline(trailPipelines.particlePipeline);
-      particleTrailPass.draw(6, config.particleCount);
-      particleTrailPass.end();
-
-      this.trailReadIndex = writeIndex;
-      this.needsTrailClear = false;
-      compositeTrailIndex = writeIndex;
-    }
-
-    const compositePass = commandEncoder.beginRenderPass({
-      label: "trail composite pass",
-      timestampWrites: gpuFrame?.timestampWrites("trailComposite"),
-      colorAttachments: [
-        {
-          view: textureView,
-          clearValue: { r: 0.01, g: 0.012, b: 0.018, a: 1 },
-          loadOp: "clear",
-          storeOp: "store",
-        },
-      ],
-    });
-    compositePass.setPipeline(this.pipelines.trailCompositePipeline);
-    compositePass.setBindGroup(0, trailResources.bindGroups[compositeTrailIndex]);
-    compositePass.draw(3);
-
-    // History is deliberately low-energy. Draw the current frame at full
-    // resolution so particles stay crisp while their previous positions fade.
-    compositePass.setBindGroup(0, this.resources.renderBindGroups[renderIndex]);
-    compositePass.setPipeline(this.pipelines.renderPipeline);
-    compositePass.draw(6, config.particleCount);
-    this.drawGrid(compositePass, config);
-    compositePass.end();
-  }
-
-  private drawGrid(renderPass: GPURenderPassEncoder, config: SimulationConfig): void {
-    if (config.gridOpacity <= 0.001) {
-      return;
-    }
-
-    renderPass.setPipeline(this.pipelines.gridPipeline);
-    renderPass.draw(GRID_VERTEX_COUNT);
-  }
-
-  private ensureTrailResources(
-    width: number,
-    height: number,
-    config: SimulationConfig,
-    trailPipelines: TrailPipelineSet,
-  ): TrailResources {
-    const targetWidth = Math.max(1, Math.floor(width * config.trailResolutionScale));
-    const targetHeight = Math.max(1, Math.floor(height * config.trailResolutionScale));
-
-    if (
-      this.trailResources
-      && this.trailResources.width === targetWidth
-      && this.trailResources.height === targetHeight
-      && this.trailResources.requestedMode === config.trailFormatMode
-      && this.trailResources.mode === trailPipelines.mode
-      && this.trailResources.scale === config.trailResolutionScale
-    ) {
-      return this.trailResources;
-    }
-
-    destroyTrailResources(this.trailResources);
-    this.trailResources = createTrailResources(
-      this.webgpu.device,
-      this.pipelines.layouts,
-      this.resources.renderUniformBuffer,
-      {
-        canvasWidth: width,
-        canvasHeight: height,
-        requestedMode: config.trailFormatMode,
-        mode: trailPipelines.mode,
-        format: trailPipelines.format,
-        scale: config.trailResolutionScale,
-      },
-    );
-    this.trailReadIndex = 0;
-    this.needsTrailClear = true;
-    this.diagnostics.log("trails.targets", {
-      ...this.describeTrailTarget(this.trailResources),
-      canvasWidth: width,
-      canvasHeight: height,
-    });
-
-    if (config.trailFormatMode !== trailPipelines.mode) {
-      this.diagnostics.log("trails.formatFallback", {
-        requestedMode: config.trailFormatMode,
-        selectedMode: trailPipelines.mode,
-        selectedFormat: trailPipelines.format,
-      });
-    }
-
-    return this.trailResources;
-  }
-
   private resolveTrailPipelines(requestedMode: TrailFormatMode): TrailPipelineSet {
     const selected = this.pipelines.trailPipelines[requestedMode]
       ?? this.pipelines.trailPipelines.compat;
@@ -488,29 +344,6 @@ export class ParticleEngine {
     }
 
     return selected;
-  }
-
-  private describeTrailTarget(resources: TrailResources): TrailTargetInfo {
-    return {
-      requestedMode: resources.requestedMode,
-      mode: resources.mode,
-      format: resources.format,
-      scale: resources.scale,
-      width: resources.width,
-      height: resources.height,
-      estimatedBytes: resources.estimatedBytes,
-    };
-  }
-
-  private releaseTrailResources(): void {
-    if (!this.trailResources) {
-      return;
-    }
-
-    destroyTrailResources(this.trailResources);
-    this.trailResources = null;
-    this.trailReadIndex = 0;
-    this.needsTrailClear = true;
   }
 
   private updateRafAverage(frameMs: number): number {

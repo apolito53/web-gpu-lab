@@ -19,9 +19,10 @@ Purpose: a compact routing map for the raw WebGPU 3D particle wind tunnel. Keep 
 - `src/instrumentation/gpuTimestampProfiler.ts`: optional timestamp-query pass instrumentation, three-slot asynchronous readback, dropped-sample accounting, and rolling GPU summaries.
 - `src/instrumentation/benchmark.ts`: versioned Direct/Trails/Stress scenarios, deterministic frame plans and pointer paths, frame-count windows, stable-tier scoring, resource estimates, and schema-v2 report shaping.
 - `src/particles/buffers.ts`: CPU seeding into a 3D volume, ping-pong storage buffers, uniform buffers, and particle bind groups.
-- `src/particles/trails.ts`: scaled 8-bit/HDR trail textures, sampler, texture bind groups, and allocation estimates.
+- `src/particles/renderTargets.ts`: trail texture ownership, sampler/bind groups, resize/format/scale recreation, ping-pong and clear state, destruction, and allocation estimates.
+- `src/particles/framePasses.ts`: explicit compute, direct, trail fade, trail injection, composite, live-particle, and grid command recording with stable pass labels.
 - `src/particles/pipelines.ts`: explicit bind group layouts plus compute, particle, optional HDR trail, fade/composite, and generated grid pipeline creation.
-- `src/particles/frame.ts`: per-frame 3D simulation/camera/grid/trail uniform writes, optional fixed simulation timing and GPU sample tags, compute dispatch, direct or offscreen trail render flow, crisp live-particle composite, grid draw, and buffer swapping.
+- `src/particles/frame.ts`: frame orchestration, 3D simulation/camera/grid/trail uniform writes, optional fixed simulation timing and GPU sample tags, render-path selection, submission, and particle-buffer swapping.
 - `src/main.ts`: owns real RAF cadence, temporary benchmark-engine swapping, complete interactive-state parking/restoration, UI/input locking, and report persistence; `src/particles/frame.ts` owns CPU command-submit timing.
 - `src/particles/types.ts`: shared config, pointer, stats, and constants.
 - `src/ui/controls.ts`: HUD, buttons, sliders, slider help tooltips, segmented modes, and status/stats updates.
@@ -33,7 +34,7 @@ Purpose: a compact routing map for the raw WebGPU 3D particle wind tunnel. Keep 
 
 - Particle physics feel: start in `src/shaders/particles.compute.wgsl`, then expose knobs through `src/ui/controls.ts` and `src/particles/types.ts`. `Diffusion` is the anti-banding phase-break knob for dense attractor stress tests; `Depth` sets the z-axis simulation volume.
 - Visual particle style, camera projection, and grid overlay: edit `src/shaders/particles.render.wgsl`. `Spin`, `Perspective`, and `Grid` are render-side controls.
-- Trail behavior and fullscreen compositing: edit `src/shaders/trails.render.wgsl`, `src/particles/trails.ts`, and the trail branch in `src/particles/frame.ts`. Target format pipelines live in `src/particles/pipelines.ts`; `Trails = 0` keeps the direct canvas path.
+- Trail behavior and fullscreen compositing: edit `src/shaders/trails.render.wgsl` and `src/particles/framePasses.ts`. Target lifecycle lives in `src/particles/renderTargets.ts`, target format pipelines live in `src/particles/pipelines.ts`, and `Trails = 0` keeps the direct canvas path.
 - Device calibration or reusable benchmark output: start in `src/instrumentation/benchmark.ts`, then wire HUD status in `src/ui/controls.ts` and diagnostics in `src/main.ts`. Pass-level GPU timing lives in `src/instrumentation/gpuTimestampProfiler.ts` and is attached in `src/particles/frame.ts`.
 - WebGPU lifecycle: use `src/gpu/webgpu.ts` and `src/gpu/resize.ts`.
 - Buffer layout changes: update `src/particles/buffers.ts`, `src/particles/pipelines.ts`, and both WGSL files together.
