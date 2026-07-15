@@ -16,6 +16,7 @@ Purpose: a compact routing map for the raw WebGPU 3D particle wind tunnel. Keep 
 - `src/gpu/webgpu.ts`: adapter/device/context creation plus device-loss and uncaptured-error hooks.
 - `src/gpu/resize.ts`: DPR-clamped canvas backing size and context reconfiguration.
 - `src/instrumentation/frameMetrics.ts`: rolling RAF/CPU-submit summaries, p95 timing, and 60 Hz budget miss ratios.
+- `src/instrumentation/gpuTimestampProfiler.ts`: optional timestamp-query pass instrumentation, three-slot asynchronous readback, dropped-sample accounting, and rolling GPU summaries.
 - `src/instrumentation/benchmark.ts`: benchmark sweep counts, warm-up/sample windows, stable-tier scoring, and report shaping.
 - `src/particles/buffers.ts`: CPU seeding into a 3D volume, ping-pong storage buffers, uniform buffers, and particle bind groups.
 - `src/particles/trails.ts`: scaled 8-bit/HDR trail textures, sampler, texture bind groups, and allocation estimates.
@@ -33,7 +34,7 @@ Purpose: a compact routing map for the raw WebGPU 3D particle wind tunnel. Keep 
 - Particle physics feel: start in `src/shaders/particles.compute.wgsl`, then expose knobs through `src/ui/controls.ts` and `src/particles/types.ts`. `Diffusion` is the anti-banding phase-break knob for dense attractor stress tests; `Depth` sets the z-axis simulation volume.
 - Visual particle style, camera projection, and grid overlay: edit `src/shaders/particles.render.wgsl`. `Spin`, `Perspective`, and `Grid` are render-side controls.
 - Trail behavior and fullscreen compositing: edit `src/shaders/trails.render.wgsl`, `src/particles/trails.ts`, and the trail branch in `src/particles/frame.ts`. Target format pipelines live in `src/particles/pipelines.ts`; `Trails = 0` keeps the direct canvas path.
-- Device calibration or reusable benchmark output: start in `src/instrumentation/benchmark.ts`, then wire HUD status in `src/ui/controls.ts` and diagnostics in `src/main.ts`.
+- Device calibration or reusable benchmark output: start in `src/instrumentation/benchmark.ts`, then wire HUD status in `src/ui/controls.ts` and diagnostics in `src/main.ts`. Pass-level GPU timing lives in `src/instrumentation/gpuTimestampProfiler.ts` and is attached in `src/particles/frame.ts`.
 - WebGPU lifecycle: use `src/gpu/webgpu.ts` and `src/gpu/resize.ts`.
 - Buffer layout changes: update `src/particles/buffers.ts`, `src/particles/pipelines.ts`, and both WGSL files together.
 - Smoke/diagnostics changes: update `scripts/smoke.mjs`, `scripts/log-server.mjs`, and `src/diagnostics.ts`.
@@ -58,4 +59,5 @@ npm.cmd run smoke
 - The 8-bit trail path is the compatibility default. HDR uses `rgba16float`, but optional pipeline failure must disable that control and retain 8-bit rendering.
 - The smoke script verifies app and diagnostics health, not real GPU rendering. Use a browser pass for visual confidence.
 - HUD `FPS` is RAF cadence, while `CPU submit` is command encoding/submission time. Do not use CPU submit as display FPS or GPU time.
-- The HUD benchmark is still RAF-based. It is useful for display-cadence stability, regression checks, and practical quality tiers, but it is not a timestamp-query GPU profiler.
+- Timestamp-query profiling is deliberately opt-in through the HUD or `?gpuProfiler=on`. Keep it off for canonical RAF baselines, and treat its summed pass durations separately from end-to-end frame cadence.
+- The profiler never waits inside RAF. It uses three readback slots and counts an unmeasured frame as dropped when all slots are occupied.

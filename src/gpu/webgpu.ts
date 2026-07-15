@@ -6,6 +6,8 @@ export interface WebGpuContext {
   canvasContext: GPUCanvasContext;
   format: GPUTextureFormat;
   adapterSummary: string;
+  timestampQuerySupported: boolean;
+  timestampQueryEnabled: boolean;
 }
 
 export class WebGpuUnavailableError extends Error {
@@ -27,6 +29,7 @@ type AdapterWithInfo = GPUAdapter & {
 export async function initializeWebGpu(
   canvas: HTMLCanvasElement,
   diagnostics: Diagnostics,
+  requestTimestampQuery = false,
 ): Promise<WebGpuContext> {
   const gpu = navigator.gpu;
   diagnostics.log("webgpu.support", { available: Boolean(gpu) });
@@ -41,7 +44,14 @@ export async function initializeWebGpu(
     throw new WebGpuUnavailableError("No WebGPU adapter was available.");
   }
 
-  const device = await adapter.requestDevice();
+  const requiredFeatures: GPUFeatureName[] = [];
+  const timestampQuerySupported = adapter.features.has("timestamp-query");
+
+  if (requestTimestampQuery && timestampQuerySupported) {
+    requiredFeatures.push("timestamp-query");
+  }
+
+  const device = await adapter.requestDevice({ requiredFeatures });
   const canvasContext = canvas.getContext("webgpu");
 
   if (!canvasContext) {
@@ -69,6 +79,7 @@ export async function initializeWebGpu(
   diagnostics.log("webgpu.ready", {
     adapter: adapterSummary,
     preferredFormat: format,
+    timestampQueryEnabled: device.features.has("timestamp-query"),
   });
 
   return {
@@ -77,6 +88,8 @@ export async function initializeWebGpu(
     canvasContext,
     format,
     adapterSummary,
+    timestampQuerySupported,
+    timestampQueryEnabled: device.features.has("timestamp-query"),
   };
 }
 

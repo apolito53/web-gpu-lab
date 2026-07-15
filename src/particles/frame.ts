@@ -1,6 +1,11 @@
 import type { Diagnostics } from "../diagnostics";
 import { configureCanvasSize } from "../gpu/resize";
 import type { WebGpuContext } from "../gpu/webgpu";
+import {
+  GpuTimestampProfiler,
+  type GpuFrameProfile,
+  type GpuFrameTimingSample,
+} from "../instrumentation/gpuTimestampProfiler";
 import { createParticleResources, destroyParticleResources, type ParticleResources } from "./buffers";
 import { createTrailResources, destroyTrailResources, type TrailResources } from "./trails";
 import {
@@ -37,6 +42,7 @@ export class ParticleEngine {
     private readonly canvas: HTMLCanvasElement,
     private readonly webgpu: WebGpuContext,
     private readonly pipelines: ParticlePipelineBundle,
+    private readonly gpuProfiler: GpuTimestampProfiler | null,
     private readonly diagnostics: Diagnostics,
     initialConfig: SimulationConfig,
   ) {
@@ -53,13 +59,31 @@ export class ParticleEngine {
     webgpu: WebGpuContext,
     diagnostics: Diagnostics,
     initialConfig: SimulationConfig,
+    gpuProfilingEnabled = false,
   ): Promise<ParticleEngine> {
     const pipelines = await createParticlePipelineBundle(webgpu.device, webgpu.format, diagnostics);
-    return new ParticleEngine(canvas, webgpu, pipelines, diagnostics, initialConfig);
+    const gpuProfiler = await GpuTimestampProfiler.create(
+      webgpu.device,
+      diagnostics,
+      gpuProfilingEnabled,
+    );
+    return new ParticleEngine(canvas, webgpu, pipelines, gpuProfiler, diagnostics, initialConfig);
   }
 
   supportsTrailFormat(mode: TrailFormatMode): boolean {
     return this.pipelines.trailPipelines[mode] !== null;
+  }
+
+  get gpuTimingSupported(): boolean {
+    return this.gpuProfiler !== null;
+  }
+
+  drainGpuTimingSamples(): GpuFrameTimingSample[] {
+    return this.gpuProfiler?.drainSamples() ?? [];
+  }
+
+  getDroppedGpuTimingFrames(): number {
+    return this.gpuProfiler?.getDroppedFrameCount() ?? 0;
   }
 
   reset(config: SimulationConfig): void {
@@ -105,6 +129,11 @@ export class ParticleEngine {
       this.releaseTrailResources();
     }
 
+    const gpuFrame = this.gpuProfiler?.beginFrame({
+      particleCount: config.particleCount,
+      renderPath: trailResources ? "trails" : "direct",
+    }) ?? null;
+
     this.writeSimulationUniforms(now, dt, config, pointer);
     this.writeRenderUniforms(
       now,
@@ -122,7 +151,10 @@ export class ParticleEngine {
     });
 
     if (!config.paused) {
-      const computePass = commandEncoder.beginComputePass({ label: "particle compute pass" });
+      const computePass = commandEncoder.beginComputePass({
+        label: "particle compute pass",
+        timestampWrites: gpuFrame?.timestampWrites("compute"),
+      });
       computePass.setPipeline(this.pipelines.computePipeline);
       computePass.setBindGroup(0, this.resources.computeBindGroups[this.activeReadIndex]);
       computePass.dispatchWorkgroups(dispatchSize);
@@ -137,14 +169,17 @@ export class ParticleEngine {
         textureView,
         trailResources,
         trailPipelines,
+        gpuFrame,
         renderIndex,
         config,
       );
     } else {
-      this.renderDirectFrame(commandEncoder, textureView, renderIndex, config);
+      this.renderDirectFrame(commandEncoder, textureView, gpuFrame, renderIndex, config);
     }
 
+    gpuFrame?.resolve(commandEncoder);
     this.webgpu.device.queue.submit([commandEncoder.finish()]);
+    gpuFrame?.afterSubmit();
 
     if (!config.paused) {
       this.activeReadIndex = renderIndex;
@@ -171,6 +206,7 @@ export class ParticleEngine {
   destroy(): void {
     destroyParticleResources(this.resources);
     destroyTrailResources(this.trailResources);
+    this.gpuProfiler?.destroy();
   }
 
   private replaceResources(particleCount: number): void {
@@ -257,11 +293,13 @@ export class ParticleEngine {
   private renderDirectFrame(
     commandEncoder: GPUCommandEncoder,
     textureView: GPUTextureView,
+    gpuFrame: GpuFrameProfile | null,
     renderIndex: 0 | 1,
     config: SimulationConfig,
   ): void {
     const renderPass = commandEncoder.beginRenderPass({
       label: "particle direct render pass",
+      timestampWrites: gpuFrame?.timestampWrites("directRender"),
       colorAttachments: [
         {
           view: textureView,
@@ -284,6 +322,7 @@ export class ParticleEngine {
     textureView: GPUTextureView,
     trailResources: TrailResources,
     trailPipelines: TrailPipelineSet,
+    gpuFrame: GpuFrameProfile | null,
     renderIndex: 0 | 1,
     config: SimulationConfig,
   ): void {
@@ -295,6 +334,7 @@ export class ParticleEngine {
 
       const fadePass = commandEncoder.beginRenderPass({
         label: "trail fade pass",
+        timestampWrites: gpuFrame?.timestampWrites("trailFade"),
         colorAttachments: [
           {
             view: trailResources.views[writeIndex],
@@ -311,6 +351,7 @@ export class ParticleEngine {
 
       const particleTrailPass = commandEncoder.beginRenderPass({
         label: "particle trail render pass",
+        timestampWrites: gpuFrame?.timestampWrites("trailParticles"),
         colorAttachments: [
           {
             view: trailResources.views[writeIndex],
@@ -331,6 +372,7 @@ export class ParticleEngine {
 
     const compositePass = commandEncoder.beginRenderPass({
       label: "trail composite pass",
+      timestampWrites: gpuFrame?.timestampWrites("trailComposite"),
       colorAttachments: [
         {
           view: textureView,

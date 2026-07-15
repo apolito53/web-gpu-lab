@@ -23,6 +23,7 @@ Open `http://127.0.0.1:5187/`.
 
 - `Pause` freezes the compute step while keeping the app alive.
 - `Reset` reseeds the GPU buffers.
+- `GPU off` reloads the lab with optional timestamp-query profiling enabled; use `GPU on` to return to the uninstrumented baseline.
 - Particle count switches between `16k`, `64k`, and `256k`.
 - Pointer modes switch the mouse/touch field between attract, repel, and orbit.
 - Strength, radius, speed, damping, and turbulence tune the compute shader uniforms.
@@ -48,7 +49,7 @@ Open `http://127.0.0.1:5187/`.
 - Recent events: `http://127.0.0.1:5188/events`
 - Retained log file: `logs/events.ndjson`
 
-The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLost`, `webgpu.uncapturedError`, `simulation.reset`, `trails.targets`, `control.changed`, `debug.mode`, periodic `render.frameSample`, and benchmark lifecycle events.
+The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLost`, `webgpu.uncapturedError`, `simulation.reset`, `trails.targets`, `control.changed`, `debug.mode`, periodic `render.frameSample`, and benchmark lifecycle events. Profiling runs additionally emit `gpuProfiler.ready`, `gpu.frameSample`, and readback failures if they occur.
 
 ## Timing
 
@@ -56,11 +57,14 @@ The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLo
 - `RAF ms` is the averaged time between animation callbacks.
 - `p95 RAF` and `Over 60` are rolling RAF-window stats for spotting stutter and 60 Hz budget misses.
 - `CPU submit` is the JavaScript-side command encoding/submission time. It is not GPU execution time.
-- True GPU timing needs timestamp queries and is intentionally left for a later profiling pass.
+- `GPU avg`, `GPU p50`, and `GPU p95` are true pass-duration sums from WebGPU timestamp queries. The profiler keeps three asynchronous readback slots and skips measurement frames instead of blocking RAF when every slot is busy.
+- GPU timing is capability-aware and opt-in. Click `GPU off` or load `?gpuProfiler=on`; unsupported adapters show `unavailable`, while a supported but unrequested profiler shows `disabled`.
+- Pass summaries distinguish `compute`, `directRender`, `trailFade`, `trailParticles`, and `trailComposite`. A direct frame reports only compute plus direct rendering, and a paused frame omits compute.
+- Keep profiling off for canonical RAF baselines. Requesting an optional device feature and collecting timestamps can change the workload, so instrumented and uninstrumented results should be compared as separate runs.
 
 ## Benchmarking
 
-The HUD benchmark is meant as a reusable device calibration harness for future WebGPU experiments. It records the adapter summary, selected WebGPU limits, user agent, DPR, viewport size, baseline simulation and camera settings, and per-count p50/p95 RAF plus CPU-submit timings.
+The HUD benchmark is meant as a reusable device calibration harness for future WebGPU experiments. It records the adapter summary, selected WebGPU limits, user agent, DPR, viewport size, baseline simulation and camera settings, and per-count p50/p95 RAF plus CPU-submit timings. When timestamp profiling is active, each step also captures aggregate and per-pass GPU timing.
 
 Reports are saved to `localStorage` under `webgpu-particle-lab:lastBenchmark`, emitted as structured diagnostics, and can be copied from the HUD. Each step records the resolved trail format, scale, dimensions, and estimated allocation when trails are active.
 

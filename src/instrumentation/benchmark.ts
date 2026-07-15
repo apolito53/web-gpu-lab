@@ -1,4 +1,5 @@
 import { summarizeFrameSamples, type FrameMetricSummary } from "./frameMetrics";
+import type { GpuTimingSummary } from "./gpuTimestampProfiler";
 import type { FrameStats, SimulationConfig, TrailTargetInfo } from "../particles/types";
 
 export const BENCHMARK_PARTICLE_COUNTS = [
@@ -34,6 +35,7 @@ export interface BenchmarkStepResult {
   over60HzBudgetRatio: number;
   stable60Hz: boolean;
   trailTarget: TrailTargetInfo | null;
+  gpuTiming: GpuTimingSummary | null;
 }
 
 export interface BenchmarkReport {
@@ -102,6 +104,7 @@ export class BenchmarkRunner {
   private stepStartedAt = 0;
   private samples: BenchmarkSample[] = [];
   private currentTrailTarget: TrailTargetInfo | null = null;
+  private currentGpuTiming: GpuTimingSummary | null = null;
 
   constructor(
     private readonly device: DeviceProfile,
@@ -135,7 +138,11 @@ export class BenchmarkRunner {
     return this.steps[this.stepIndex];
   }
 
-  record(now: number, stats: FrameStats): BenchmarkProgress {
+  record(
+    now: number,
+    stats: FrameStats,
+    gpuTimingSummary: GpuTimingSummary,
+  ): BenchmarkProgress {
     const elapsedMs = now - this.stepStartedAt;
     const phase = elapsedMs < BENCHMARK_WARMUP_MS ? "warmup" : "sample";
     const phaseElapsedMs = phase === "warmup" ? elapsedMs : elapsedMs - BENCHMARK_WARMUP_MS;
@@ -147,6 +154,10 @@ export class BenchmarkRunner {
         cpuSubmitMs: stats.cpuSubmitMs,
       });
       this.currentTrailTarget = stats.trailTarget ? { ...stats.trailTarget } : null;
+
+      if (gpuTimingSummary.supported && gpuTimingSummary.sampleCount > 0) {
+        this.currentGpuTiming = gpuTimingSummary;
+      }
     }
 
     if (elapsedMs < BENCHMARK_WARMUP_MS + BENCHMARK_SAMPLE_MS) {
@@ -197,12 +208,18 @@ export class BenchmarkRunner {
     this.stepStartedAt = now;
     this.samples = [];
     this.currentTrailTarget = null;
+    this.currentGpuTiming = null;
   }
 
   private finishStep(): BenchmarkStepResult {
     const summary = summarizeFrameSamples(this.samples);
     const particleCount = this.currentParticleCount;
-    const result = createStepResult(particleCount, summary, this.currentTrailTarget);
+    const result = createStepResult(
+      particleCount,
+      summary,
+      this.currentTrailTarget,
+      this.currentGpuTiming,
+    );
     this.results.push(result);
     return result;
   }
@@ -240,6 +257,7 @@ function createStepResult(
   particleCount: number,
   summary: FrameMetricSummary,
   trailTarget: TrailTargetInfo | null,
+  gpuTiming: GpuTimingSummary | null,
 ): BenchmarkStepResult {
   const stable60Hz =
     summary.sampleCount > 0
@@ -260,6 +278,7 @@ function createStepResult(
     over60HzBudgetRatio: Number(summary.over60HzBudgetRatio.toFixed(3)),
     stable60Hz,
     trailTarget,
+    gpuTiming,
   };
 }
 

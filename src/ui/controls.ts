@@ -1,5 +1,6 @@
 import type { BenchmarkProgress, BenchmarkReport } from "../instrumentation/benchmark";
 import type { FrameMetricSummary } from "../instrumentation/frameMetrics";
+import type { GpuTimingSummary } from "../instrumentation/gpuTimestampProfiler";
 import {
   DEFAULT_CONFIG,
   type DebugMode,
@@ -15,6 +16,7 @@ export interface ControlEvents {
   onConfigChanged: (config: SimulationConfig, key: string) => void;
   onReset: () => void;
   onPointerLockChanged: (locked: boolean) => void;
+  onGpuProfilerToggle: () => void;
   onBenchmarkStart: () => void;
   onBenchmarkCopy: () => void;
 }
@@ -30,6 +32,9 @@ export class Controls {
   private readonly fpsValue: HTMLElement;
   private readonly rafFrameValue: HTMLElement;
   private readonly cpuSubmitValue: HTMLElement;
+  private readonly gpuAverageValue: HTMLElement;
+  private readonly gpuP50Value: HTMLElement;
+  private readonly gpuP95Value: HTMLElement;
   private readonly p95FrameValue: HTMLElement;
   private readonly overBudgetValue: HTMLElement;
   private readonly particleValue: HTMLElement;
@@ -37,6 +42,7 @@ export class Controls {
   private readonly pointerValue: HTMLElement;
   private readonly pauseButton: HTMLButtonElement;
   private readonly lockButton: HTMLButtonElement;
+  private readonly gpuProfilerButton: HTMLButtonElement;
   private readonly benchmarkValue: HTMLElement;
   private readonly stableValue: HTMLElement;
   private readonly tierValue: HTMLElement;
@@ -64,6 +70,9 @@ export class Controls {
     const fps = createMetric("FPS", "--");
     const rafFrame = createMetric("RAF ms", "--");
     const cpuSubmit = createMetric("CPU submit", "--");
+    const gpuAverage = createMetric("GPU avg", "--");
+    const gpuP50 = createMetric("GPU p50", "--");
+    const gpuP95 = createMetric("GPU p95", "--");
     const p95Frame = createMetric("p95 RAF", "--");
     const overBudget = createMetric("Over 60", "--");
     const particles = createMetric("Particles", this.formatCount(this.config.particleCount));
@@ -74,6 +83,9 @@ export class Controls {
     this.fpsValue = fps.value;
     this.rafFrameValue = rafFrame.value;
     this.cpuSubmitValue = cpuSubmit.value;
+    this.gpuAverageValue = gpuAverage.value;
+    this.gpuP50Value = gpuP50.value;
+    this.gpuP95Value = gpuP95.value;
     this.p95FrameValue = p95Frame.value;
     this.overBudgetValue = overBudget.value;
     this.particleValue = particles.value;
@@ -87,6 +99,9 @@ export class Controls {
       fps.row,
       rafFrame.row,
       cpuSubmit.row,
+      gpuAverage.row,
+      gpuP50.row,
+      gpuP95.row,
       p95Frame.row,
       overBudget.row,
       particles.row,
@@ -109,7 +124,14 @@ export class Controls {
       this.lockButton.textContent = locked ? "Unlock" : "Lock";
       this.events.onPointerLockChanged(locked);
     });
-    primaryActions.append(this.pauseButton, resetButton, this.lockButton);
+    this.gpuProfilerButton = createButton("GPU off", () => this.events.onGpuProfilerToggle());
+    this.gpuProfilerButton.title = "Reload with optional GPU timestamp profiling enabled or disabled.";
+    primaryActions.append(
+      this.pauseButton,
+      resetButton,
+      this.lockButton,
+      this.gpuProfilerButton,
+    );
     panel.append(primaryActions);
 
     this.countButtons = this.createSegmentedButtons(
@@ -397,6 +419,14 @@ export class Controls {
     }
   }
 
+  setGpuProfilerMode(enabled: boolean, supported: boolean): void {
+    this.gpuProfilerButton.disabled = !supported;
+    this.gpuProfilerButton.dataset.active = String(enabled && supported);
+    this.gpuProfilerButton.textContent = supported
+      ? enabled ? "GPU on" : "GPU off"
+      : "GPU n/a";
+  }
+
   updateStats(stats: FrameStats): void {
     this.fpsValue.textContent = stats.fps.toFixed(0);
     this.rafFrameValue.textContent = `${stats.rafFrameMs.toFixed(2)} ms`;
@@ -414,6 +444,26 @@ export class Controls {
 
     this.p95FrameValue.textContent = `${summary.p95FrameMs.toFixed(2)} ms`;
     this.overBudgetValue.textContent = `${Math.round(summary.over60HzBudgetRatio * 100)}%`;
+  }
+
+  updateGpuPerformance(summary: GpuTimingSummary): void {
+    if (!summary.supported) {
+      this.gpuAverageValue.textContent = summary.availability;
+      this.gpuP50Value.textContent = "--";
+      this.gpuP95Value.textContent = "--";
+      return;
+    }
+
+    if (summary.sampleCount < 6) {
+      this.gpuAverageValue.textContent = "warming";
+      this.gpuP50Value.textContent = "--";
+      this.gpuP95Value.textContent = "--";
+      return;
+    }
+
+    this.gpuAverageValue.textContent = `${summary.averageMs.toFixed(3)} ms`;
+    this.gpuP50Value.textContent = `${summary.p50Ms.toFixed(3)} ms`;
+    this.gpuP95Value.textContent = `${summary.p95Ms.toFixed(3)} ms`;
   }
 
   updateBenchmark(progress: BenchmarkProgress): void {
