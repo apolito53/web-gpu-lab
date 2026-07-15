@@ -1,6 +1,6 @@
 # WebGPU Particle Lab
 
-Raw WebGPU particle wind tunnel for learning compute passes, storage buffers, explicit bind group layouts, WGSL, and cheap 3D projection without hiding the machinery behind Three.js.
+Raw WebGPU particle wind tunnel for learning compute passes, storage buffers, offscreen render targets, explicit bind group layouts, WGSL, and cheap 3D projection without hiding the machinery behind Three.js.
 
 ## Run
 
@@ -31,6 +31,8 @@ Open `http://127.0.0.1:5187/`.
 - Spin rotates the render camera around the volume so the 3D shape is visible.
 - Perspective controls near/far sprite scaling in the projected render pass.
 - Grid controls the opacity of the 3D reference grid overlay.
+- Trails controls offscreen trail opacity. Set it to `0` for the direct particle-to-canvas render path.
+- Decay controls how quickly trail history fades between frames.
 - Each slider has a hover/focus `?` tooltip with a short explanation.
 - `Bench` runs a short calibration sweep from `16k` to `1.0m` particles, then restores the prior particle count and pause state.
 - `Copy` writes the last benchmark report JSON to the clipboard.
@@ -43,7 +45,7 @@ Open `http://127.0.0.1:5187/`.
 - Recent events: `http://127.0.0.1:5188/events`
 - Retained log file: `logs/events.ndjson`
 
-The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLost`, `webgpu.uncapturedError`, `simulation.reset`, `control.changed`, `debug.mode`, periodic `render.frameSample`, and benchmark lifecycle events.
+The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLost`, `webgpu.uncapturedError`, `simulation.reset`, `trails.targets`, `control.changed`, `debug.mode`, periodic `render.frameSample`, and benchmark lifecycle events.
 
 ## Timing
 
@@ -58,6 +60,18 @@ The browser emits `app.boot`, `webgpu.ready`, `webgpu.profile`, `webgpu.deviceLo
 The HUD benchmark is meant as a reusable device calibration harness for future WebGPU experiments. It records the adapter summary, selected WebGPU limits, user agent, DPR, viewport size, baseline simulation and camera settings, and per-count p50/p95 RAF plus CPU-submit timings.
 
 Reports are saved to `localStorage` under `webgpu-particle-lab:lastBenchmark`, emitted as structured diagnostics, and can be copied from the HUD.
+
+## Trail Rendering
+
+When `Trails` is above `0`, particles render through a multi-pass path:
+
+- fade the previous trail texture into the write texture
+- inject low-energy particle history normalized by the effective frame decay
+- composite the trail texture to the canvas
+- draw the current particles directly so the live frame stays crisp
+- draw the grid overlay last so it stays crisp
+
+The fullscreen passes preserve framebuffer orientation, so ping-pong history does not alternate or mirror between frames. Trail targets currently use `rgba8unorm` for broad desktop and mobile compatibility. When `Trails` is `0`, the renderer skips trail textures and uses the direct canvas path.
 
 ## Validate
 

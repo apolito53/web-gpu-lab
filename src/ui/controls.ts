@@ -291,6 +291,30 @@ export class Controls {
         },
       ),
       createSlider(
+        "Trails",
+        "Controls trail opacity. Set to 0 for the direct render path.",
+        0,
+        1,
+        0.01,
+        this.config.trailOpacity,
+        (value) => {
+          this.config.trailOpacity = value;
+          this.emitChange("trailOpacity");
+        },
+      ),
+      createSlider(
+        "Decay",
+        "Controls how quickly offscreen trails fade between frames.",
+        0.85,
+        0.995,
+        0.001,
+        this.config.trailDecay,
+        (value) => {
+          this.config.trailDecay = value;
+          this.emitChange("trailDecay");
+        },
+      ),
+      createSlider(
         "Size",
         "Sets particle sprite diameter in screen pixels before velocity boost.",
         1,

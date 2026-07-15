@@ -9,6 +9,7 @@ struct RenderParams {
   style: vec4f,
   camera: vec4f,
   grid: vec4f,
+  trail: vec4f,
 };
 
 struct VertexOutput {
@@ -234,8 +235,7 @@ fn gridFragmentMain(input: GridOutput) -> @location(0) vec4f {
   return input.color;
 }
 
-@fragment
-fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+fn particleFragmentColor(input: VertexOutput) -> vec4f {
   let radius = length(input.local);
 
   if (radius > 1.0) {
@@ -254,4 +254,20 @@ fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
   }
 
   return vec4f(color, alpha);
+}
+
+@fragment
+fn fragmentMain(input: VertexOutput) -> @location(0) vec4f {
+  return particleFragmentColor(input);
+}
+
+@fragment
+fn trailFragmentMain(input: VertexOutput) -> @location(0) vec4f {
+  let particleColor = particleFragmentColor(input);
+  let frameDecay = pow(clamp(renderParams.trail.y, 0.0, 0.9999), max(renderParams.trail.z, 0.0));
+
+  // Scale new history by the amount removed this frame. This keeps steady-state
+  // trail energy roughly stable as decay changes instead of saturating rgba8.
+  let historyGain = clamp(1.0 - frameDecay, 0.0001, 1.0);
+  return vec4f(particleColor.rgb, particleColor.a * historyGain);
 }

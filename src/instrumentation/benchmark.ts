@@ -55,6 +55,8 @@ export interface BenchmarkReport {
     | "cameraSpin"
     | "perspective"
     | "gridOpacity"
+    | "trailOpacity"
+    | "trailDecay"
     | "particleSize"
     | "pointerMode"
     | "debugMode"
@@ -112,6 +114,8 @@ export class BenchmarkRunner {
       cameraSpin: baselineConfig.cameraSpin,
       perspective: baselineConfig.perspective,
       gridOpacity: baselineConfig.gridOpacity,
+      trailOpacity: baselineConfig.trailOpacity,
+      trailDecay: baselineConfig.trailDecay,
       particleSize: baselineConfig.particleSize,
       pointerMode: baselineConfig.pointerMode,
       debugMode: baselineConfig.debugMode,

@@ -1,10 +1,13 @@
 import type { Diagnostics } from "../diagnostics";
 import computeShaderSource from "../shaders/particles.compute.wgsl?raw";
 import renderShaderSource from "../shaders/particles.render.wgsl?raw";
+import trailShaderSource from "../shaders/trails.render.wgsl?raw";
+import { TRAIL_FORMAT } from "./types";
 
 export interface ParticleLayouts {
   compute: GPUBindGroupLayout;
   render: GPUBindGroupLayout;
+  trail: GPUBindGroupLayout;
 }
 
 export interface ParticlePipelineBundle {
@@ -12,6 +15,9 @@ export interface ParticlePipelineBundle {
   computePipeline: GPUComputePipeline;
   gridPipeline: GPURenderPipeline;
   renderPipeline: GPURenderPipeline;
+  trailFadePipeline: GPURenderPipeline;
+  trailCompositePipeline: GPURenderPipeline;
+  trailParticlePipeline: GPURenderPipeline;
 }
 
 export async function createParticlePipelineBundle(
@@ -30,10 +36,17 @@ export async function createParticlePipelineBundle(
     label: "particle render shader",
     code: renderShaderSource,
   });
+  const trailModule = device.createShaderModule({
+    label: "trail render shader",
+    code: trailShaderSource,
+  });
 
   let computePipeline: GPUComputePipeline;
   let gridPipeline: GPURenderPipeline;
   let renderPipeline: GPURenderPipeline;
+  let trailFadePipeline: GPURenderPipeline;
+  let trailCompositePipeline: GPURenderPipeline;
+  let trailParticlePipeline: GPURenderPipeline;
 
   try {
     computePipeline = await device.createComputePipelineAsync({
@@ -48,41 +61,41 @@ export async function createParticlePipelineBundle(
       },
     });
 
-    renderPipeline = await device.createRenderPipelineAsync({
-      label: "particle render pipeline",
-      layout: device.createPipelineLayout({
-        label: "particle render layout",
-        bindGroupLayouts: [layouts.render],
-      }),
-      vertex: {
-        module: renderModule,
-        entryPoint: "vertexMain",
-      },
-      fragment: {
-        module: renderModule,
-        entryPoint: "fragmentMain",
-        targets: [
-          {
-            format,
-            blend: {
-              color: {
-                srcFactor: "src-alpha",
-                dstFactor: "one",
-                operation: "add",
-              },
-              alpha: {
-                srcFactor: "one",
-                dstFactor: "one-minus-src-alpha",
-                operation: "add",
-              },
-            },
-          },
-        ],
-      },
-      primitive: {
-        topology: "triangle-list",
-      },
-    });
+    renderPipeline = await createParticleRenderPipeline(
+      device,
+      renderModule,
+      layouts.render,
+      format,
+      "fragmentMain",
+      "particle render pipeline",
+    );
+
+    trailParticlePipeline = await createParticleRenderPipeline(
+      device,
+      renderModule,
+      layouts.render,
+      TRAIL_FORMAT,
+      "trailFragmentMain",
+      "particle trail render pipeline",
+    );
+
+    trailFadePipeline = await createTrailPipeline(
+      device,
+      trailModule,
+      layouts.trail,
+      TRAIL_FORMAT,
+      "fadeFragmentMain",
+      "trail fade pipeline",
+    );
+
+    trailCompositePipeline = await createTrailPipeline(
+      device,
+      trailModule,
+      layouts.trail,
+      format,
+      "compositeFragmentMain",
+      "trail composite pipeline",
+    );
 
     gridPipeline = await device.createRenderPipelineAsync({
       label: "particle reference grid pipeline",
@@ -140,7 +153,84 @@ export async function createParticlePipelineBundle(
     computePipeline,
     gridPipeline,
     renderPipeline,
+    trailFadePipeline,
+    trailCompositePipeline,
+    trailParticlePipeline,
   };
+}
+
+function createParticleRenderPipeline(
+  device: GPUDevice,
+  module: GPUShaderModule,
+  layout: GPUBindGroupLayout,
+  format: GPUTextureFormat,
+  fragmentEntryPoint: string,
+  label: string,
+): Promise<GPURenderPipeline> {
+  return device.createRenderPipelineAsync({
+    label,
+    layout: device.createPipelineLayout({
+      label: `${label} layout`,
+      bindGroupLayouts: [layout],
+    }),
+    vertex: {
+      module,
+      entryPoint: "vertexMain",
+    },
+    fragment: {
+      module,
+      entryPoint: fragmentEntryPoint,
+      targets: [
+        {
+          format,
+          blend: {
+            color: {
+              srcFactor: "src-alpha",
+              dstFactor: "one",
+              operation: "add",
+            },
+            alpha: {
+              srcFactor: "one",
+              dstFactor: "one-minus-src-alpha",
+              operation: "add",
+            },
+          },
+        },
+      ],
+    },
+    primitive: {
+      topology: "triangle-list",
+    },
+  });
+}
+
+function createTrailPipeline(
+  device: GPUDevice,
+  module: GPUShaderModule,
+  layout: GPUBindGroupLayout,
+  format: GPUTextureFormat,
+  fragmentEntryPoint: string,
+  label: string,
+): Promise<GPURenderPipeline> {
+  return device.createRenderPipelineAsync({
+    label,
+    layout: device.createPipelineLayout({
+      label: `${label} layout`,
+      bindGroupLayouts: [layout],
+    }),
+    vertex: {
+      module,
+      entryPoint: "fullscreenVertexMain",
+    },
+    fragment: {
+      module,
+      entryPoint: fragmentEntryPoint,
+      targets: [{ format }],
+    },
+    primitive: {
+      topology: "triangle-list",
+    },
+  });
 }
 
 function createLayouts(device: GPUDevice): ParticleLayouts {
@@ -181,5 +271,26 @@ function createLayouts(device: GPUDevice): ParticleLayouts {
     ],
   });
 
-  return { compute, render };
+  const trail = device.createBindGroupLayout({
+    label: "trail texture bind group layout",
+    entries: [
+      {
+        binding: 0,
+        visibility: GPUShaderStage.FRAGMENT,
+        texture: { sampleType: "float" },
+      },
+      {
+        binding: 1,
+        visibility: GPUShaderStage.FRAGMENT,
+        sampler: { type: "filtering" },
+      },
+      {
+        binding: 2,
+        visibility: GPUShaderStage.FRAGMENT,
+        buffer: { type: "uniform" },
+      },
+    ],
+  });
+
+  return { compute, render, trail };
 }
